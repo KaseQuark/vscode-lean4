@@ -1,8 +1,8 @@
 import * as React from 'react'
 
-import { RpcContext } from './contexts'
+import { RpcContext , EditorContext } from './contexts'
 import { DocumentPosition } from './util'
-import { CodeToken, CodeWithInfos, InfoPopup, InfoWithCtx, InteractiveDiagnostics_infoToInteractive, TaggedText } from './rpcInterface'
+import { CodeToken, CodeWithInfos, InfoPopup, InfoWithCtx, InteractiveDiagnostics_infoToInteractive, TaggedText, getConvZoomCommands, } from './rpcInterface'
 import { HighlightOnHoverSpan, WithTooltipOnHover } from './tooltips'
 
 export interface InteractiveTextComponentProps<T> {
@@ -34,6 +34,7 @@ export function InteractiveTaggedText<T>({pos, fmt, InnerTagUi}: InteractiveTagg
 /** Shows `explicitValue : itsType` and a docstring if there is one. */
 function TypePopupContents({pos, info, redrawTooltip}: {pos: DocumentPosition, info: InfoWithCtx, redrawTooltip: () => void}) {
   const rs = React.useContext(RpcContext)
+  const ec = React.useContext(EditorContext)
   // When `err` is defined we show the error,
   // otherwise if `ip` is defined we show its contents,
   // otherwise a 'loading' message.
@@ -61,6 +62,22 @@ function TypePopupContents({pos, info, redrawTooltip}: {pos: DocumentPosition, i
 
   if (ip) {
     return <>
+      <button onClick={async e => {
+        e.preventDefault()
+        if(ip.exprExplicit) {
+          const commands = getConvZoomCommands(rs, pos, ip.exprExplicit)
+          try {
+            const comm = await commands
+            await ec.insertZoomCommands(comm?.commands ?? 'could not get commands')
+          } catch (err: any) {
+            const errS = typeof err === 'string' ? err : JSON.stringify(err);
+            await ec.insertZoomCommands(errS)
+          }
+        } else {
+          await ec.insertZoomCommands('you should not see this: interactiveCode::TypePopupContents')
+        }
+      }
+      }>Zoom</button>
       {ip.exprExplicit && <InteractiveCode pos={pos} fmt={ip.exprExplicit} />} : {ip.type && <InteractiveCode pos={pos} fmt={ip.type} />}
       {ip.doc && <hr />}
       {ip.doc && ip.doc} {/* TODO markdown */}

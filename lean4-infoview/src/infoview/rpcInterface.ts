@@ -10,6 +10,8 @@ import { RpcPtr, LeanDiagnostic } from '@lean4/infoview-api'
 import { DocumentPosition } from './util'
 import { RpcSessions } from './rpcSessions'
 
+import { TextDocumentPositionParams } from 'vscode-languageserver-protocol'
+
 export type TaggedText<T> =
     { text: string } |
     { append: TaggedText<T>[] } |
@@ -77,6 +79,10 @@ export interface InteractiveGoal {
     goalPrefix?: string
 }
 
+export interface ConvZoomCommands {
+    commands?: string
+}
+
 function InteractiveGoal_registerRefs(rs: RpcSessions, pos: DocumentPosition, g: InteractiveGoal) {
     CodeWithInfos_registerRefs(rs, pos, g.type)
     for (const h of g.hyps) {
@@ -103,6 +109,17 @@ export async function getInteractiveTermGoal(rs: RpcSessions, pos: DocumentPosit
     const ret = await rs.call<InteractiveGoal>(pos, 'Lean.Widget.getInteractiveTermGoal', DocumentPosition.toTdpp(pos))
     if (ret) InteractiveGoal_registerRefs(rs, pos, ret)
     return ret
+}
+
+export interface ConvZoomParams {
+    expr : CodeWithInfos
+    positionParams : TextDocumentPositionParams
+}
+
+export async function getConvZoomCommands(rs: RpcSessions, pos: DocumentPosition, exprParam: CodeWithInfos): Promise<ConvZoomCommands | undefined> {
+    const params: ConvZoomParams = {expr: exprParam, positionParams: DocumentPosition.toTdpp(pos)}
+    const ret = await rs.call<ConvZoomCommands>(pos, 'Lean.Widget.getConvZoomCommands', params)
+    if (ret) return ret
 }
 
 export type MessageData = RpcPtr<'MessageData'>
