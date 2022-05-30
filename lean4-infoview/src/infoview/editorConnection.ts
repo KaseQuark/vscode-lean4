@@ -37,7 +37,7 @@ export class EditorConnection {
 
   /** Inserts the zoom commands at the cursor position. */
   async insertZoomCommands(text: string) {
-    await this.api.insertText(text, 'above');
+    await this.api.insertText('\n' + text, 'here');
   }
 
   requestPlainGoal(pos: DocumentPosition): Promise<PlainGoal | undefined> {

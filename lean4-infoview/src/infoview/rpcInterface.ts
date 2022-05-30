@@ -38,11 +38,12 @@ export function TaggedText_stripTags<T>(tt: TaggedText<T>): string {
 
 export type InfoWithCtx = RpcPtr<'InfoWithCtx'>
 
-export interface CodeToken {
+export interface SubexprInfo {
     info: InfoWithCtx
+    subexprPos?: number
 }
 
-export type CodeWithInfos = TaggedText<CodeToken>
+export type CodeWithInfos = TaggedText<SubexprInfo>
 export type ExprWithCtx = RpcPtr<'ExprWithCtx'>
 
 export interface InfoPopup {
@@ -112,11 +113,11 @@ export async function getInteractiveTermGoal(rs: RpcSessions, pos: DocumentPosit
 }
 
 export interface ConvZoomParams {
-    expr : CodeWithInfos
+    expr : SubexprInfo
     positionParams : TextDocumentPositionParams
 }
 
-export async function getConvZoomCommands(rs: RpcSessions, pos: DocumentPosition, exprParam: CodeWithInfos): Promise<ConvZoomCommands | undefined> {
+export async function getConvZoomCommands(rs: RpcSessions, pos: DocumentPosition, exprParam: SubexprInfo): Promise<ConvZoomCommands | undefined> {
     const params: ConvZoomParams = {expr: exprParam, positionParams: DocumentPosition.toTdpp(pos)}
     const ret = await rs.call<ConvZoomCommands>(pos, 'Lean.Widget.getConvZoomCommands', params)
     if (ret) return ret
