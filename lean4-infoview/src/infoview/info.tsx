@@ -1,13 +1,14 @@
 import * as React from 'react';
 import type { Location } from 'vscode-languageserver-protocol';
 
-import { Goals as GoalsUi, Goal as GoalUi, goalsToString } from './goals';
+import { Goals as GoalsUi, Goal as GoalUi, goalsToString, GoalFilterState } from './goals';
 import { basename, DocumentPosition, RangeHelpers, useEvent, usePausableState } from './util';
 import { Details } from './collapsing';
 import { EditorContext, ProgressContext, RpcContext, VersionContext } from './contexts';
 import { MessagesList, useMessagesFor } from './messages';
 import { getInteractiveGoals, getInteractiveTermGoal, InteractiveDiagnostic, InteractiveGoal, InteractiveGoals } from './rpcInterface';
 import { updatePlainGoals, updateTermGoal } from './goalCompat';
+import { WithTooltipOnHover } from './tooltips'
 
 type InfoStatus = 'loading' | 'updating' | 'error' | 'ready';
 type InfoKind = 'cursor' | 'pin';
@@ -33,9 +34,9 @@ export function InfoStatusBar(props: InfoStatusBarProps) {
     const ec = React.useContext(EditorContext);
 
     const statusColTable: {[T in InfoStatus]: string} = {
-        'loading': 'gold',
-        'updating': 'gold',
-        'error': 'dark-red',
+        'loading': 'gold ',
+        'updating': 'gold ',
+        'error': 'dark-red ',
         'ready': '',
     }
     const statusColor = statusColTable[status];
@@ -43,7 +44,7 @@ export function InfoStatusBar(props: InfoStatusBarProps) {
     const isPinned = kind === 'pin';
 
     return (
-    <summary style={{transition: 'color 0.5s ease'}} className={'mv2 pointer' + statusColor}>
+    <summary style={{transition: 'color 0.5s ease'}} className={'mv2 pointer ' + statusColor}>
         {locationString}
         {isPinned && !isPaused && ' (pinned)'}
         {!isPinned && isPaused && ' (paused)'}
@@ -56,15 +57,19 @@ export function InfoStatusBar(props: InfoStatusBarProps) {
                    title="copy state to comment" />}
             {isPinned &&
                 <a className="link pointer mh2 dim codicon codicon-go-to-file"
+                   data-id="reveal-file-location"
                    onClick={e => { e.preventDefault(); void ec.revealPosition(pos); }}
                    title="reveal file location" />}
-            <a className={'link pointer mh2 dim codicon ' + (isPinned ? 'codicon-pinned' : 'codicon-pin')}
+            <a className={'link pointer mh2 dim codicon ' + (isPinned ? 'codicon-pinned ' : 'codicon-pin ')}
+                data-id="toggle-pinned"
                 onClick={e => { e.preventDefault(); onPin(pos); }}
                 title={isPinned ? 'unpin' : 'pin'} />
-            <a className={'link pointer mh2 dim codicon ' + (isPaused ? 'codicon-debug-continue' : 'codicon-debug-pause')}
+            <a className={'link pointer mh2 dim codicon ' + (isPaused ? 'codicon-debug-continue ' : 'codicon-debug-pause ')}
+               data-id="toggle-paused"
                onClick={e => { e.preventDefault(); setPaused(!isPaused); }}
                title={isPaused ? 'continue updating' : 'pause updating'} />
             <a className="link pointer mh2 dim codicon codicon-refresh"
+               data-id="update"
                onClick={e => { e.preventDefault(); void triggerUpdate(); }}
                title="update"/>
         </span>
@@ -95,6 +100,7 @@ export function InfoDisplay(props0: InfoDisplayProps) {
         await props0.triggerUpdate();
         setShouldRefresh(true);
     };
+    const [goalFilters, setGoalFilters] = React.useState<GoalFilterState>({ reverse: false, isType: true, isInstance: true, isHiddenAssumption: true});
 
     const {kind, pos, status, messages, goals, termGoal, error} = props;
 
@@ -122,33 +128,69 @@ export function InfoDisplay(props0: InfoDisplayProps) {
     const hasGoals = status !== 'error' && goals;
     const hasTermGoal = status !== 'error' && termGoal;
     const hasMessages = status !== 'error' && messages.length !== 0;
+    const sortClasses = 'link pointer mh2 dim codicon fr ' + (goalFilters.reverse ? 'codicon-arrow-up ' : 'codicon-arrow-down ');
+    const sortButton = <a className={sortClasses} title="reverse list" onClick={e => {
+        setGoalFilters(s => {
+            return { ...s, reverse: !s.reverse }
+        } ); }
+    } />
 
+    const filterMenu = <span>
+        <a className='link pointer popup-menu' onClick={e => {
+            setGoalFilters(s => {
+                return { ...s, isType: !s.isType }
+            } ); }}>
+                <span className={'popup-menu-icon codicon ' + (goalFilters.isType ? 'codicon-check ' : 'codicon-blank ')}>&nbsp;</span>
+                <span className='popup-menu-text '>types</span>
+        </a>
+        <br/>
+        <a className='link pointer popup-menu' onClick={e => {
+            setGoalFilters(s => {
+                return { ...s, isInstance: !s.isInstance }
+            } ); }}>
+                <span className={'popup-menu-icon codicon ' + (goalFilters.isInstance ? 'codicon-check ' : 'codicon-blank ')}>&nbsp;</span>
+                <span className='popup-menu-text '>instances</span>
+        </a>
+        <br/>
+        <a className='link pointer popup-menu' onClick={e => {
+            setGoalFilters(s => {
+                return { ...s, isHiddenAssumption: !s.isHiddenAssumption }
+            } ); }}>
+                <span className={'popup-menu-icon codicon ' + (goalFilters.isHiddenAssumption ? 'codicon-check ' : 'codicon-blank ')}>&nbsp;</span>
+                <span className='popup-menu-text '>hidden assumptions</span>
+        </a>
+    </span>
+    const filterButton = <span className='fr'>
+        <WithTooltipOnHover mkTooltipContent={() => {return filterMenu}}>
+            <a className={'link pointer mh2 dim codicon ' + ((!goalFilters.isInstance || !goalFilters.isType || !goalFilters.isHiddenAssumption) ? 'codicon-filter-filled ': 'codicon-filter ')}/>
+        </WithTooltipOnHover></span>
+    /* Adding {' '} to manage string literals properly: https://reactjs.org/docs/jsx-in-depth.html#string-literals-1 */
     return (
     <Details initiallyOpen>
         <InfoStatusBar {...props} triggerUpdate={triggerDisplayUpdate} isPaused={isPaused} setPaused={setPaused} copyGoalToComment={copyGoalToComment} />
         <div className="ml1">
             {hasError &&
                 <div className="error">
-                    Error updating: {error}.
-                    <a className="link pointer dim" onClick={e => { e.preventDefault(); void triggerDisplayUpdate(); }}>Try again.</a>
+                    Error updating:{' '}{error}.
+                    <a className="link pointer dim" onClick={e => { e.preventDefault(); void triggerDisplayUpdate(); }}>{' '}Try again.</a>
                 </div>}
             <div style={{display: hasGoals ? 'block' : 'none'}}>
                 <Details initiallyOpen>
                     <summary className="mv2 pointer">
-                        Tactic state
+                        Tactic state {sortButton} {filterButton}
                     </summary>
                     <div className='ml1'>
-                        {hasGoals && <GoalsUi pos={pos} goals={goals} />}
+                        {hasGoals && <GoalsUi pos={pos} goals={goals} filter={goalFilters} />}
                     </div>
                 </Details>
             </div>
             <div style={{display: hasTermGoal ? 'block' : 'none'}}>
                 <Details initiallyOpen>
                     <summary className="mv2 pointer">
-                        Expected type
+                        Expected type {sortButton} {filterButton}
                     </summary>
                     <div className='ml1'>
-                        {hasTermGoal && <GoalUi pos={pos} goal={termGoal} />}
+                        {hasTermGoal && <GoalUi pos={pos} goal={termGoal} filter={goalFilters} />}
                     </div>
                 </Details>
             </div>
@@ -164,10 +206,11 @@ export function InfoDisplay(props0: InfoDisplayProps) {
             </div>
             {nothingToShow && (
                 isPaused ?
-                    <span>Updating is paused.
+                    /* Adding {' '} to manage string literals properly: https://reactjs.org/docs/jsx-in-depth.html#string-literals-1 */
+                    <span>Updating is paused.{' '}
                         <a className="link pointer dim" onClick={e => { e.preventDefault(); void triggerDisplayUpdate(); }}>Refresh</a>
-                        or <a className="link pointer dim" onClick={e => { e.preventDefault(); setPaused(false); }}>resume updating</a>
-                        to see information.
+                        {' '}or <a className="link pointer dim" onClick={e => { e.preventDefault(); setPaused(false); }}>resume updating</a>
+                        {' '}to see information.
                     </span> :
                     'No info found.')}
         </div>
@@ -248,6 +291,16 @@ function InfoAux(props: InfoProps) {
     const messages = useMessagesFor(pos);
     const serverIsProcessing = useIsProcessingAt(pos);
 
+    // We encapsulate `InfoDisplay` props in a single piece of state for atomicity, in particular
+    // to avoid displaying a new position before the server has sent us all the goal state there.
+    const mkDisplayProps = () => ({ ...props, pos, goals, termGoal, error });
+    const [displayProps, setDisplayProps] = React.useState(mkDisplayProps());
+    const [shouldUpdateDisplay, setShouldUpdateDisplay] = React.useState(false);
+    if (shouldUpdateDisplay) {
+        setDisplayProps(mkDisplayProps());
+        setShouldUpdateDisplay(false);
+    }
+
     const triggerUpdate = useDelayedThrottled(serverIsProcessing ? 500 : 50, async () => {
         setStatus('updating');
 
@@ -271,8 +324,15 @@ function InfoAux(props: InfoProps) {
 
         function onError(err: any) {
             const errS = typeof err === 'string' ? err : JSON.stringify(err);
-            setError(`Error fetching goals: ${errS}`);
-            setStatus('error');
+            // we need to check if this value is empty or not, because maybe we are assigning
+            // a message error with an empty error
+            if (errS === '{}' || errS === undefined) {
+                setError(undefined);
+            }
+            else {
+                setError(`Error fetching goals: ${errS}`);
+                setStatus('error');
+            }
         }
 
         try {
@@ -281,6 +341,7 @@ function InfoAux(props: InfoProps) {
             const [goals, termGoal] = await allReq;
             setGoals(goals);
             setTermGoal(termGoal);
+            setStatus('ready');
         } catch (err: any) {
             if (err?.code === -32801) {
                 // Document has been changed since we made the request, try again
@@ -288,13 +349,12 @@ function InfoAux(props: InfoProps) {
                 return;
             } else { onError(err); }
         }
-
-        setStatus('ready');
+        setShouldUpdateDisplay(true);
     });
 
     React.useEffect(() => void triggerUpdate(), [pos.uri, pos.line, pos.character, serverIsProcessing]);
 
     return (
-        <InfoDisplay {...props} pos={pos} status={status} messages={messages} goals={goals} termGoal={termGoal} error={error} triggerUpdate={triggerUpdate} />
+        <InfoDisplay {...displayProps} status={status} messages={messages} triggerUpdate={triggerUpdate} />
     );
 }

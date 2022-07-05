@@ -1,9 +1,8 @@
 import { TextDocument, EventEmitter, Diagnostic,
     DocumentHighlight, Range, DocumentHighlightKind, workspace,
     Disposable, Uri, ConfigurationChangeEvent, OutputChannel, DiagnosticCollection,
-    Position, WorkspaceFolder } from 'vscode'
+    WorkspaceFolder, window } from 'vscode'
 import {
-    Code2ProtocolConverter,
     DidChangeTextDocumentParams,
     DidCloseTextDocumentParams,
     DidOpenTextDocumentNotification,
@@ -11,13 +10,13 @@ import {
     InitializeResult,
     LanguageClient,
     LanguageClientOptions,
-    Protocol2CodeConverter,
     PublishDiagnosticsParams,
     ServerOptions,
     State
 } from 'vscode-languageclient/node'
 import * as ls from 'vscode-languageserver-protocol'
-import { toolchainPath, addServerEnvPaths, serverArgs, serverLoggingEnabled, serverLoggingPath, getElaborationDelay, lakeEnabled } from './config'
+
+import { toolchainPath, lakePath, addServerEnvPaths, serverArgs, serverLoggingEnabled, serverLoggingPath, getElaborationDelay, lakeEnabled } from './config'
 import { assert } from './utils/assert'
 import { LeanFileProgressParams, LeanFileProgressProcessingInfo } from '@lean4/infoview-api';
 import { LocalStorageService} from './utils/localStorage'
@@ -28,13 +27,10 @@ import { URL } from 'url';
 import { join } from 'path';
  // @ts-ignore
 import { SemVer } from 'semver';
-import { fileExists } from './utils/fsHelper';
+import { fileExists, isFileInFolder } from './utils/fsHelper';
+import { c2pConverter, p2cConverter, patchConverters } from './utils/converters'
 
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-interface Lean4Diagnostic extends ls.Diagnostic {
-    fullRange: ls.Range;
-}
 
 export type ServerProgress = Map<Uri, LeanFileProgressProcessingInfo[]>;
 
@@ -51,6 +47,7 @@ export class LeanClient implements Disposable {
     private workspaceFolder: WorkspaceFolder | undefined;
     private folderUri: Uri;
     private subscriptions: Disposable[] = []
+    private noPrompt : boolean = false;
 
     private didChangeEmitter = new EventEmitter<DidChangeTextDocumentParams>()
     didChange = this.didChangeEmitter.event
@@ -74,7 +71,7 @@ export class LeanClient implements Disposable {
     private progressChangedEmitter = new EventEmitter<[string, LeanFileProgressProcessingInfo[]]>()
     progressChanged = this.progressChangedEmitter.event
 
-    private stoppedEmitter = new EventEmitter()
+    private stoppedEmitter = new EventEmitter<string>()
     stopped = this.stoppedEmitter.event
 
     private restartedEmitter = new EventEmitter()
@@ -102,9 +99,18 @@ export class LeanClient implements Disposable {
         if (this.isStarted()) void this.stop()
     }
 
+    async showRestartMessage(): Promise<void> {
+        const restartItem = 'Restart Lean Language Server';
+        const item = await window.showErrorMessage('Lean Language Server has stopped unexpectedly.', restartItem)
+        if (item === restartItem) {
+            void this.start();
+        }
+    }
+
     async restart(): Promise<void> {
         const startTime = Date.now()
 
+        console.log('Restarting Lean Language Server')
         if (this.isStarted()) {
             await this.stop()
         }
@@ -118,7 +124,8 @@ export class LeanClient implements Disposable {
             env.LEAN_SERVER_LOG_DIR = serverLoggingPath()
         }
 
-        let executable = (this.toolchainPath) ? join(this.toolchainPath, 'bin', 'lake') : 'lake';
+        let executable = lakePath() ||
+            (this.toolchainPath ? join(this.toolchainPath, 'bin', 'lake') : 'lake');
 
         // check if the lake process will start (skip it on scheme: 'untitled' files)
         let useLake = lakeEnabled() && this.folderUri && this.folderUri.scheme === 'file';
@@ -164,7 +171,6 @@ export class LeanClient implements Disposable {
             command: executable,
             args: options.concat(serverArgs()),
             options: {
-                shell: true,
                 cwd: this.folderUri?.fsPath,
                 env
             }
@@ -188,15 +194,19 @@ export class LeanClient implements Disposable {
             initializationOptions: {
                 editDelay: getElaborationDelay(), hasWidgets: true,
             },
+            connectionOptions: {
+                maxRestartCount: 0,
+                cancellationStrategy: undefined as any,
+            },
             middleware: {
                 handleDiagnostics: (uri, diagnostics, next) => {
                     next(uri, diagnostics);
                     if (!this.client) return;
-                    const uri_ = this.client.code2ProtocolConverter.asUri(uri);
+                    const uri_ = c2pConverter.asUri(uri);
                     const diagnostics_ = [];
                     for (const d of diagnostics) {
                         const d_: ls.Diagnostic = {
-                            ...this.client.code2ProtocolConverter.asDiagnostic(d),
+                            ...c2pConverter.asDiagnostic(d),
                         };
                         diagnostics_.push(d_);
                     }
@@ -219,7 +229,7 @@ export class LeanClient implements Disposable {
                 didChange: async (data, next) => {
                     await next(data);
                     if (!this.running || !this.client) return; // there was a problem starting lean server.
-                    const params = this.client.code2ProtocolConverter.asChangeTextDocumentParams(data);
+                    const params = c2pConverter.asChangeTextDocumentParams(data);
                     this.didChangeEmitter.fire(params);
                 },
 
@@ -229,7 +239,7 @@ export class LeanClient implements Disposable {
                     }
                     await next(doc);
                     if (!this.running || !this.client) return; // there was a problem starting lean server.
-                    const params = this.client.code2ProtocolConverter.asCloseTextDocumentParams(doc);
+                    const params = c2pConverter.asCloseTextDocumentParams(doc);
                     this.didCloseEmitter.fire(params);
                 },
 
@@ -268,9 +278,10 @@ export class LeanClient implements Disposable {
             serverOptions,
             clientOptions
         )
-        this.patchConverters(this.client.protocol2CodeConverter, this.client.code2ProtocolConverter)
+        let insideRestart = true;
+        patchConverters(this.client.protocol2CodeConverter, this.client.code2ProtocolConverter)
         try {
-            this.client.onDidChangeState((s) =>{
+            this.client.onDidChangeState(async (s) => {
                 // see https://github.com/microsoft/vscode-languageserver-node/issues/825
                 if (s.newState === State.Starting) {
                     console.log('client starting');
@@ -278,9 +289,16 @@ export class LeanClient implements Disposable {
                     const end = Date.now()
                     console.log('client running, started in ', end - startTime, 'ms');
                     this.running = true; // may have been auto restarted after it failed.
+                    if (!insideRestart) {
+                        this.restartedEmitter.fire(undefined)
+                    }
                 } else if (s.newState === State.Stopped) {
+                    this.stoppedEmitter.fire('Lean language server has stopped. ');
                     console.log('client has stopped or it failed to start');
                     this.running = false;
+                    if (!this.noPrompt){
+                        await this.showRestartMessage();
+                    }
                 }
             })
             this.client.start()
@@ -295,6 +313,7 @@ export class LeanClient implements Disposable {
         } catch (error) {
             this.outputChannel.appendLine('' + error);
             this.serverFailedEmitter.fire('' + error);
+            insideRestart = false;
             return;
         }
 
@@ -306,7 +325,7 @@ export class LeanClient implements Disposable {
         const starHandler = (method: string, params_: any) => {
             if (method === '$/lean/fileProgress' && this.client) {
                 const params = params_ as LeanFileProgressParams;
-                const uri = this.client.protocol2CodeConverter.asUri(params.textDocument.uri)
+                const uri = p2cConverter.asUri(params.textDocument.uri)
                 this.progressChangedEmitter.fire([uri.toString(), params.processing]);
                 // save the latest progress on this Uri in case infoview needs it later.
                 this.progress.set(uri, params.processing);
@@ -324,30 +343,7 @@ export class LeanClient implements Disposable {
         });
 
         this.restartedEmitter.fire(undefined)
-    }
-
-    private patchConverters(p2c: Protocol2CodeConverter, c2p: Code2ProtocolConverter) {
-        // eslint-disable-next-line @typescript-eslint/unbound-method
-        const oldAsDiagnostic = p2c.asDiagnostic
-        p2c.asDiagnostic = function (protDiag: Lean4Diagnostic): Diagnostic {
-            if (!protDiag.message) {
-                // Fixes: Notification handler 'textDocument/publishDiagnostics' failed with message: message must be set
-                protDiag.message = ' ';
-            }
-            const diag = oldAsDiagnostic.apply(this, [protDiag])
-            diag.fullRange = p2c.asRange(protDiag.fullRange)
-            return diag
-        }
-        p2c.asDiagnostics = async (diags) => diags.map(d => p2c.asDiagnostic(d))
-
-        // eslint-disable-next-line @typescript-eslint/unbound-method
-        const c2pAsDiagnostic = c2p.asDiagnostic;
-        c2p.asDiagnostic = function (diag: Diagnostic & {fullRange: Range}): Lean4Diagnostic {
-            const protDiag = c2pAsDiagnostic.apply(this, [diag])
-            protDiag.fullRange = c2p.asRange(diag.fullRange)
-            return protDiag
-        }
-        c2p.asDiagnostics = async (diags) => diags.map(d => c2p.asDiagnostic(d))
+        insideRestart = false;
     }
 
     async openLean4Document(doc: TextDocument) {
@@ -385,12 +381,7 @@ export class LeanClient implements Disposable {
             if (this.folderUri.scheme === 'file') {
                 const realPath1 = await fs.promises.realpath(this.folderUri.fsPath);
                 const realPath2 = await fs.promises.realpath(uri.fsPath);
-                if (process.platform === 'win32') {
-                    // windows paths are case insensitive.
-                    return realPath2.toLowerCase().startsWith(realPath1.toLowerCase());
-                } else {
-                    return realPath2.startsWith(realPath1);
-                }
+                return isFileInFolder(realPath2, realPath1);
             }
             else {
                 return uri.toString().startsWith(this.folderUri.toString());
@@ -417,10 +408,17 @@ export class LeanClient implements Disposable {
     async stop(): Promise<void> {
         assert(() => this.isStarted())
         if (this.client && this.running) {
-            this.stoppedEmitter.fire(undefined);
-            await this.client.stop()
+            this.noPrompt = true;
+            try {
+                // some timing conditions can happen while running unit tests that cause
+                // this to throw an exception which then causes those tests to fail.
+                await this.client.stop();
+            } catch (e) {
+                console.log(`Error stopping language client: ${e}`)
+            }
         }
 
+        this.noPrompt = false;
         this.progress = new Map()
         this.client = undefined
         this.running = false
@@ -475,27 +473,10 @@ export class LeanClient implements Disposable {
         return this.running  && this.client ? this.client.sendNotification(method, params) : undefined;
     }
 
-    convertUri(uri: Uri): Uri {
-        return this.running  && this.client ? Uri.parse(this.client.code2ProtocolConverter.asUri(uri)) : uri;
-    }
-
-    convertUriFromString(uri: string): Uri {
-        const u = Uri.parse(uri);
-        return this.running && this.client ? Uri.parse(this.client.code2ProtocolConverter.asUri(u)) : u;
-    }
-
-    convertPosition(pos: ls.Position) : Position | undefined {
-        return this.running ? this.client?.protocol2CodeConverter.asPosition(pos) : undefined;
-    }
-
-    convertRange(range: ls.Range | undefined): Range | undefined {
-        return this.running && range ? this.client?.protocol2CodeConverter.asRange(range) : undefined;
-    }
-
     async getDiagnosticParams(uri: Uri, diagnostics: readonly Diagnostic[]) : Promise<PublishDiagnosticsParams> {
         const params: PublishDiagnosticsParams = {
-            uri: this.convertUri(uri)?.toString(),
-            diagnostics: await this.client?.code2ProtocolConverter.asDiagnostics(diagnostics as Diagnostic[]) ?? []
+            uri: c2pConverter.asUri(uri),
+            diagnostics: await c2pConverter.asDiagnostics(diagnostics as Diagnostic[])
         };
         return params;
     }

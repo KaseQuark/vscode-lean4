@@ -98,7 +98,10 @@ export function AllMessages({uri: uri0}: { uri: DocumentUri }) {
     const iDiags0 = React.useMemo(() => lazy(async () => {
         if (sv?.hasWidgetsV1()) {
             try {
-                return await getInteractiveDiagnostics(rs, { uri: uri0, line: 0, character: 0 }) || [];
+                const diags = await getInteractiveDiagnostics(rs, { uri: uri0, line: 0, character: 0 });
+                if (diags && diags.length > 0) {
+                    return diags
+                }
             } catch (err: any) {
                 if (err?.code === -32801) {
                     // Document has been changed since we made the request. This can happen
@@ -112,7 +115,6 @@ export function AllMessages({uri: uri0}: { uri: DocumentUri }) {
         }
         return diags0.map(d => ({ ...(d as LeanDiagnostic), message: { text: d.message } }));
     }), [sv, rs, uri0, diags0]);
-
     const [isPaused, setPaused, [uri, diags, iDiags], _] = usePausableState(false, [uri0, diags0, iDiags0]);
 
     // Fetch interactive diagnostics when we're entering the paused state
@@ -146,7 +148,7 @@ export function AllMessages({uri: uri0}: { uri: DocumentUri }) {
 function AllMessagesBody({uri, messages}: {uri: DocumentUri, messages: () => Promise<InteractiveDiagnostic[]>}) {
     const [msgs, setMsgs] = React.useState<InteractiveDiagnostic[] | undefined>(undefined)
     React.useEffect(() => void messages().then(setMsgs), [messages])
-    if (msgs === undefined) return <>Loading messages..</>
+    if (msgs === undefined) return <>Loading messages...</>
     else return <MessagesList uri={uri} messages={msgs}/>
 }
 
@@ -171,13 +173,15 @@ export function useMessagesForFile(uri: DocumentUri, line?: number): Interactive
     const sv = React.useContext(VersionContext)
     const lspDiags = React.useContext(LspDiagnosticsContext)
     const [diags, setDiags] = React.useState<InteractiveDiagnostic[]>([])
+
     async function updateDiags() {
         setDiags((lspDiags.get(uri) || []).map(d => ({ ...(d as LeanDiagnostic), message: { text: d.message } })));
         if (sv?.hasWidgetsV1()) {
             try {
                 const diags = await getInteractiveDiagnostics(rs, { uri, line: 0, character: 0 },
                     line ? { start: line, end: line + 1 } : undefined)
-                if (diags) {
+                if (diags && diags.length > 0) {
+                    // diags may be [] when lake fails
                     setDiags(diags)
                 }
             } catch (err: any) {
@@ -190,7 +194,7 @@ export function useMessagesForFile(uri: DocumentUri, line?: number): Interactive
             }
         }
     }
-    React.useEffect(() => void updateDiags(), [uri, line, lspDiags.get(uri)])
+    React.useEffect(() => void updateDiags(), [uri, line, rs.sessionIdAt(uri), lspDiags.get(uri)])
     return diags;
 }
 

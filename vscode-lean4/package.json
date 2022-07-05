@@ -2,7 +2,7 @@
 	"name": "lean4",
 	"displayName": "lean4",
 	"description": "Lean 4 language support for VS Code",
-	"version": "0.0.71",
+	"version": "0.0.80",
 	"publisher": "leanprover",
 	"engines": {
 		"vscode": "^1.61.0"
@@ -89,6 +89,12 @@
 					"default": true,
 					"markdownDescription": "Enable Lake server when possible."
 				},
+				"lean4.lakePath": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Path to Lake. Leave this blank to use the Lake from the toolchain.",
+					"scope": "machine-overridable"
+				},
 				"lean4.serverArgs": {
 					"type": "array",
 					"default": [],
@@ -128,55 +134,6 @@
 					"type": "string",
 					"default": "",
 					"markdownDescription": "Add an additional CSS snippet to the infoview."
-				},
-				"lean4.infoViewTacticStateFilters": {
-					"type": "array",
-					"default": [
-						{
-							"regex": "^_",
-							"match": false,
-							"flags": ""
-						},
-						{
-							"name": "goals only",
-							"regex": "^(⊢|\\d+ goals|case|$)",
-							"match": true,
-							"flags": ""
-						}
-					],
-					"markdownDescription": "An array of objects containing regular expression strings that can be used to filter (positively or negatively) the tactic state in the infoview. Set to an empty array `[]` to hide the filter select dropdown.\n \n Each object must contain the following keys: 'regex': string, 'match': boolean, 'flags': string.\n 'regex' is a properly-escaped regex string,\n 'match' = true (false) means blocks in the tactic state matching 'regex' will be included (excluded) in the infoview, \n 'flags' are additional flags passed to the JavaScript `RegExp` constructor.\n The 'name' key is optional and may contain a string that is displayed in the dropdown instead of the full regex details.",
-					"items": {
-						"type": "object",
-						"description": "an object with required properties 'regex': string, 'match': boolean, and 'flags': string, and optional property 'name': string",
-						"properties": {
-							"name": {
-								"type": "string",
-								"description": "name displayed in the dropdown"
-							},
-							"regex": {
-								"type": "string",
-								"description": "a properly-escaped regex string, e.g. '^_' matches any string beginning with an underscore"
-							},
-							"match": {
-								"type": "boolean",
-								"description": "whether tactic state lines matching the value of 'regex' should be included (true) or excluded (false)"
-							},
-							"flags": {
-								"type": "string",
-								"description": "additional flags passed to the RegExp constructor, e.g. 'i' for ignore case"
-							}
-						},
-						"required": [
-							"regex",
-							"match",
-							"flags"
-						]
-					}
-				},
-				"lean4.infoViewFilterIndex": {
-					"type": "number",
-					"default": -1,
-					"markdownDescription": "Index of the filter applied to the tactic state (in the array infoViewTacticStateFilters). An index of -1 means no filter is applied."
 				},
 				"lean4.elaborationDelay": {
 					"type": "number",
@@ -449,5 +406,11 @@
 		"webpack-cli": "^4.9.1"
 	},
 	"icon": "images/lean_logo.png",
-	"license": "Apache-2.0"
+	"license": "Apache-2.0",
+	"__metadata": {
+		"id": "ddb6b8b1-9e92-40ce-90d4-45bb5f345ef9",
+		"publisherDisplayName": "leanprover",
+		"publisherId": "36715126-cec3-4ee0-926f-91a098ea5112",
+		"isPreReleaseVersion": false
+	}
 }

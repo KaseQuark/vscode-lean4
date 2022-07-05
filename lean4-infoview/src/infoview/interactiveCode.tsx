@@ -1,9 +1,10 @@
 import * as React from 'react'
 
-import { RpcContext , EditorContext } from './contexts'
-import { DocumentPosition } from './util'
-import { SubexprInfo, CodeWithInfos, InfoPopup, InfoWithCtx, InteractiveDiagnostics_infoToInteractive, TaggedText, getConvZoomCommands } from './rpcInterface'
-import { HighlightOnHoverSpan, WithTooltipOnHover } from './tooltips'
+import { EditorContext, RpcContext } from './contexts'
+import { DocumentPosition, useAsync, mapRpcError } from './util'
+import { SubexprInfo, CodeWithInfos, InteractiveDiagnostics_infoToInteractive, getGoToLocation, TaggedText, getConvZoomCommands } from './rpcInterface'
+import { DetectHoverSpan, HoverState, WithTooltipOnHover } from './tooltips'
+import { Location } from 'vscode-languageserver-protocol'
 
 export interface InteractiveTextComponentProps<T> {
   pos: DocumentPosition
@@ -31,41 +32,34 @@ export function InteractiveTaggedText<T>({pos, fmt, InnerTagUi}: InteractiveTagg
   else throw new Error(`malformed 'TaggedText': '${fmt}'`)
 }
 
+interface TypePopupContentsProps {
+  pos: DocumentPosition
+  info: SubexprInfo
+  redrawTooltip: () => void
+}
+
 /** Shows `explicitValue : itsType` and a docstring if there is one. */
-function TypePopupContents({pos, info, redrawTooltip}: {pos: DocumentPosition, info: InfoWithCtx, redrawTooltip: () => void}) {
+function TypePopupContents({ pos, info, redrawTooltip }: TypePopupContentsProps) {
   const rs = React.useContext(RpcContext)
   // When `err` is defined we show the error,
   // otherwise if `ip` is defined we show its contents,
   // otherwise a 'loading' message.
-  const [ip, setIp] = React.useState<InfoPopup>()
-  const [err, setErr] = React.useState<string>()
-
-  React.useEffect(() => {
-    InteractiveDiagnostics_infoToInteractive(rs, pos, info).then(val => {
-      if (val) {
-        setErr(undefined)
-        setIp(val)
-      }
-    }).catch(ex => {
-      if ('message' in ex) setErr('' + ex.message)
-      else if ('code' in ex) setErr(`RPC error (${ex.code})`)
-      else setErr(JSON.stringify(ex))
-    })
-  }, [rs, pos.uri, pos.line, pos.character, info])
+  const [_, ip, err] = useAsync(
+    () => InteractiveDiagnostics_infoToInteractive(rs, pos, info.info),
+    [rs, pos.uri, pos.line, pos.character, info.info, info.subexprPos])
 
   // We let the tooltip know to redo its layout whenever our contents change.
   React.useEffect(() => redrawTooltip(), [ip, err, redrawTooltip])
 
-  if (err)
-    return <>Error: {err}</>
-
-  if (ip) {
-    return <>
+  return <>
+    {ip && <>
       {ip.exprExplicit && <InteractiveCode pos={pos} fmt={ip.exprExplicit} />} : {ip.type && <InteractiveCode pos={pos} fmt={ip.type} />}
       {ip.doc && <hr />}
       {ip.doc && ip.doc} {/* TODO markdown */}
-    </>
-  } else return <>Loading..</>
+    </>}
+    {err && <>Error: {mapRpcError(err).message}</>}
+    {(!ip && !err) && <>Loading..</>}
+  </>
 }
 
 /** Tags in code represent values which can be hovered over to display extra info. */
@@ -74,7 +68,7 @@ function InteractiveCodeTag({pos, tag: ct, fmt}: InteractiveTagProps<SubexprInfo
   const ec = React.useContext(EditorContext)
   const mkTooltip = React.useCallback((redrawTooltip: () => void) =>
     <div className="font-code tl pre-wrap">
-      <TypePopupContents pos={pos} info={ct.info}
+      <TypePopupContents pos={pos} info={ct}
         redrawTooltip={redrawTooltip} />
       <button onClick={async e => {
         e.preventDefault()
@@ -89,15 +83,59 @@ function InteractiveCodeTag({pos, tag: ct, fmt}: InteractiveTagProps<SubexprInfo
       }
       }>Zoom</button>
     </div>, [pos.uri, pos.line, pos.character, ct.info])
+
+  // We mimick the VSCode ctrl-hover and ctrl-click UI for go-to-definition
+  const [hoverState, setHoverState] = React.useState<HoverState>('off')
+
+  const [goToLoc, setGoToLoc] = React.useState<Location | undefined>(undefined)
+  const fetchGoToLoc = React.useCallback(async () => {
+    if (goToLoc !== undefined) return goToLoc
+    try {
+      const lnks = await getGoToLocation(rs, pos, 'definition', ct.info)
+      if (lnks !== undefined && lnks.length > 0) {
+        const loc = { uri: lnks[0].targetUri, range: lnks[0].targetSelectionRange }
+        setGoToLoc(loc)
+        return loc
+      }
+    } catch(e) {
+      console.error('Error in go-to-definition: ', JSON.stringify(e))
+    }
+    return undefined
+  }, [rs, pos.uri, pos.line, pos.character, ct.info, goToLoc])
+  React.useEffect(() => { if (hoverState === 'ctrlOver') void fetchGoToLoc() }, [hoverState])
+
   return (
-    <WithTooltipOnHover tooltipContent={mkTooltip}>
-      <HighlightOnHoverSpan>
+    <WithTooltipOnHover
+      mkTooltipContent={mkTooltip}
+      onClick={(e, next) => {
+        // On ctrl-click, if location is known, go to it in the editor
+        if (e.ctrlKey || e.metaKey) {
+          setHoverState(st => st === 'over' ? 'ctrlOver' : st)
+          void fetchGoToLoc().then(loc => {
+            if (loc === undefined) return
+            void ec.revealPosition({ uri: loc.uri, ...loc.range.start })
+          })
+        }
+        if (!e.ctrlKey) next(e)
+      }}
+    >
+      <DetectHoverSpan
+        setHoverState={setHoverState}
+        className={'highlightable '
+                    + (hoverState !== 'off' ? 'highlight ' : '')
+                    + (hoverState === 'ctrlOver' && goToLoc !== undefined ? 'underline ' : '')}
+      >
         <InteractiveCode pos={pos} fmt={fmt} />
-      </HighlightOnHoverSpan>
+      </DetectHoverSpan>
     </WithTooltipOnHover>
   )
 }
 
-export function InteractiveCode({pos, fmt}: {pos: DocumentPosition, fmt: CodeWithInfos}) {
-  return InteractiveTaggedText({pos, fmt, InnerTagUi: InteractiveCodeTag})
+interface InteractiveCodeProps {
+  pos: DocumentPosition
+  fmt: CodeWithInfos
+}
+
+export function InteractiveCode(props: InteractiveCodeProps) {
+  return <InteractiveTaggedText InnerTagUi={InteractiveCodeTag} fmt={props.fmt} pos={props.pos} />
 }

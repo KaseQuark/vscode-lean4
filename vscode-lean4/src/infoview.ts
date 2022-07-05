@@ -8,10 +8,11 @@ import {
 import { EditorApi, InfoviewApi, LeanFileProgressParams, TextInsertKind, RpcConnectParams, RpcConnected, RpcKeepAliveParams } from '@lean4/infoview-api';
 import { LeanClient } from './leanclient';
 import { getInfoViewAllErrorsOnLine, getInfoViewAutoOpen, getInfoViewAutoOpenShowGoal,
-    getInfoViewFilterIndex, getInfoViewStyle, getInfoViewTacticStateFilters, minIfProd, prodOrDev } from './config';
+    getInfoViewStyle, minIfProd, prodOrDev } from './config';
 import { Rpc } from './rpc';
 import { LeanClientProvider } from './utils/clientProvider'
 import * as ls from 'vscode-languageserver-protocol'
+import { c2pConverter, p2cConverter } from './utils/converters';
 
 const keepAlivePeriodMs = 10000
 
@@ -59,6 +60,8 @@ export class InfoProvider implements Disposable {
     private clientNotifSubscriptions: Map<string, [number, Disposable[]]> = new Map();
 
     private rpcSessions: Map<string, RpcSession> = new Map();
+
+    private clientsFailed: Map<string, string> = new Map();
 
     private subscribeDidChangeNotification(client: LeanClient, method: string){
         const h = client.didChange((params) => {
@@ -190,19 +193,15 @@ export class InfoProvider implements Disposable {
             let uri: Uri | undefined
             let pos: Position | undefined
             if (tdpp) {
-                const client = this.clientProvider.findClient(tdpp.textDocument.uri);
-                if (!client?.running) return;
-                uri = client.convertUriFromString(tdpp.textDocument.uri);
-                pos = client.convertPosition(tdpp.position);
+                uri = p2cConverter.asUri(tdpp.textDocument.uri);
+                pos = p2cConverter.asPosition(tdpp.position);
             }
             await this.handleInsertText(text, kind, uri, pos);
         },
         showDocument: async (show) => {
-            const client = this.clientProvider.findClient(show.uri);
-            if (!client?.running) return;
             void this.revealEditorSelection(
                 Uri.parse(show.uri),
-                client.convertRange(show.selection)
+                p2cConverter.asRange(show.selection)
             );
         },
 
@@ -238,6 +237,11 @@ export class InfoProvider implements Disposable {
 
         provider.clientRemoved((client) => {
             void this.onClientRemoved(client);
+        });
+
+        provider.clientStopped(([client, activeClient, err]) => {
+            void this.onActiveClientStopped(client, activeClient, err);
+
         });
 
         this.subscriptions.push(
@@ -285,6 +289,12 @@ export class InfoProvider implements Disposable {
             }
         }
 
+        await this.webviewPanel?.api.serverStopped(''); // clear any server stopped state
+        const folder = client.getWorkspaceFolder()
+        if (this.clientsFailed.has(folder)) {
+            this.clientsFailed.delete(folder) // delete from failed clients
+            console.log('Restarting server for workspace: ' + folder)
+        }
         await this.initInfoView(window.activeTextEditor, client);
     }
 
@@ -313,6 +323,21 @@ export class InfoProvider implements Disposable {
 
     onClientRemoved(client: LeanClient) {
         // todo: remove subscriptions for this client...
+    }
+
+    async onActiveClientStopped(client: LeanClient, activeClient: boolean, msg: string) {
+        // Will show a message in case the active client stops
+        // add failed client into a list (will be removed in case the client is restarted)
+        if (activeClient)
+        {
+            // means that client and active client are the same and just show the error message
+            await this.webviewPanel?.api.serverStopped(msg);
+        }
+
+        console.log(`client stopped: ${client.getWorkspaceFolder()}`)
+
+        // remember this client is in a stopped state
+        this.clientsFailed.set(client.getWorkspaceFolder(), msg)
     }
 
     dispose(): void {
@@ -458,11 +483,11 @@ export class InfoProvider implements Disposable {
                 await this.webviewPanel?.api.initialize(loc);
             }
         }
-
         // The infoview gets information about file progress, diagnostics, etc.
         // by listening to notifications.  Send these notifications when the infoview starts
         // so that it has up-to-date information.
         if (client?.initializeResult) {
+            await this.webviewPanel?.api.serverStopped(''); // clear any server stopped state
             await this.webviewPanel?.api.serverRestarted(client.initializeResult);
             await this.sendDiagnostics(client);
             await this.sendProgress(client);
@@ -473,8 +498,6 @@ export class InfoProvider implements Disposable {
 
     private async sendConfig() {
        await this.webviewPanel?.api.changedInfoviewConfig({
-           infoViewTacticStateFilters: getInfoViewTacticStateFilters(),
-           filterIndex: getInfoViewFilterIndex(),
            infoViewAllErrorsOnLine: getInfoViewAllErrorsOnLine(),
            infoViewAutoOpenShowGoal: getInfoViewAutoOpenShowGoal(),
        });
@@ -495,7 +518,7 @@ export class InfoProvider implements Disposable {
         for (const [uri, processing] of client.progress) {
             const params: LeanFileProgressParams = {
                 textDocument: {
-                    uri: client.convertUri(uri)?.toString(),
+                    uri: c2pConverter.asUri(uri),
                     version: 0, // HACK: The infoview ignores this
                 },
                 processing,
@@ -534,6 +557,28 @@ export class InfoProvider implements Disposable {
             // InfoView for the newly opened document.
             return;
         }
+        // actual editor
+        if (this.clientsFailed.size > 0){
+            const client = this.clientProvider.findClient(editor.document.uri.toString())
+            if (client) {
+                const folder = client.getWorkspaceFolder()
+                if (this.clientsFailed.has(folder)){
+                    // send stopped event
+                    const msg = this.clientsFailed.get(folder)
+                    await this.webviewPanel?.api.serverStopped(msg || '');
+                    return;
+                } else {
+                    await this.updateStatus(loc)
+                }
+            }
+        } else {
+            await this.updateStatus(loc)
+        }
+
+    }
+
+    private async updateStatus(loc: ls.Location | undefined): Promise<void> {
+        await this.webviewPanel?.api.serverStopped(''); // clear any server stopped state
         await this.autoOpen();
         await this.webviewPanel?.api.changedCursorLocation(loc);
     }
@@ -561,7 +606,7 @@ export class InfoProvider implements Disposable {
     private async handleInsertText(text: string, kind: TextInsertKind, uri?: Uri, pos?: Position) {
         let editor: TextEditor | undefined
         if (uri) {
-           editor = window.visibleTextEditors.find(e => e.document.uri === uri);
+           editor = window.visibleTextEditors.find(e => e.document.uri.toString() === uri.toString());
         } else {
             editor = window.activeTextEditor;
             if (!editor) { // sometimes activeTextEditor is null.
