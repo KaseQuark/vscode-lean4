@@ -16,9 +16,13 @@ export function closeAllEditors(): Thenable<any> {
     return vscode.commands.executeCommand('workbench.action.closeAllEditors');
 }
 
+export function closeActiveEditor(): Thenable<any> {
+    return vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+}
+
 export async function initLean4(fileName: string) : Promise<vscode.Extension<Exports>>{
 
-    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    await closeAllEditors();
     const options : vscode.TextDocumentShowOptions = { preview: false };
 
     const doc = await vscode.workspace.openTextDocument(fileName);
@@ -38,9 +42,21 @@ export async function initLean4(fileName: string) : Promise<vscode.Extension<Exp
     return lean;
 }
 
+export async function insertText(text: string) : Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    assert(editor !== undefined, 'no active editor');
+    await editor.edit((builder) => {
+        builder.delete(editor.selection);
+        const cursorPos = editor.selection.end;
+        builder.insert(cursorPos, text);
+        const endInsert = editor.selection.end;
+        editor.selection = new vscode.Selection(endInsert, endInsert);
+    });
+}
+
 export async function initLean4Untitled(contents: string) : Promise<vscode.Extension<Exports>>{
     // make sure test is always run in predictable state, which is no file or folder open
-    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    await closeAllEditors();
 
     await vscode.commands.executeCommand('workbench.action.files.newUntitledFile');
 
@@ -103,7 +119,7 @@ export async function resetToolchain(clientProvider: LeanClientProvider | undefi
     }
 }
 
-export async function waitForActiveExtension(extensionId: string, retries=10, delay=1000) : Promise<vscode.Extension<Exports> | null> {
+export async function waitForActiveExtension(extensionId: string, retries=30, delay=1000) : Promise<vscode.Extension<Exports> | null> {
 
     console.log(`Waiting for extension ${extensionId} to be loaded...`);
     let lean : vscode.Extension<Exports> | undefined;
@@ -135,30 +151,31 @@ export async function waitForActiveExtension(extensionId: string, retries=10, de
     return lean;
 }
 
-export async function waitForActiveEditor(filename='', retries=10, delay=1000) : Promise<vscode.TextEditor> {
+export async function waitForActiveEditor(filename='', retries=30, delay=1000) : Promise<vscode.TextEditor> {
     let count = 0;
     while (!vscode.window.activeTextEditor && count < retries){
         await sleep(delay);
         count += 1;
     }
-    const editor = vscode.window.activeTextEditor
+    let editor = vscode.window.activeTextEditor
     assert(editor, 'Missing active text editor');
 
     console.log(`Loaded document ${editor.document.uri}`);
 
     if (filename) {
         count = 0;
-        while (!editor.document.uri.fsPath.endsWith(filename) && count < retries){
+        while (editor && !editor.document.uri.fsPath.toLowerCase().endsWith(filename.toLowerCase()) && count < retries){
             await sleep(delay);
             count += 1;
+            editor = vscode.window.activeTextEditor
         }
-        assert(editor.document.uri.fsPath.endsWith(filename), `Active text editor does not match ${filename}`);
+        assert(editor && editor.document.uri.fsPath.toLowerCase().endsWith(filename.toLowerCase()), `Active text editor does not match ${filename}`);
     }
 
     return editor;
 }
 
-export async function waitForInfoViewOpen(infoView: InfoProvider, retries=10, delay=1000) : Promise<boolean> {
+export async function waitForInfoViewOpen(infoView: InfoProvider, retries=30, delay=1000) : Promise<boolean> {
     let count = 0;
     let opened = false;
     console.log('Waiting for InfoView...');
@@ -179,7 +196,7 @@ export async function waitForInfoViewOpen(infoView: InfoProvider, retries=10, de
     return false;
 }
 
-export async function waitForInfoviewHtml(infoView: InfoProvider, toFind : string, retries=10, delay=1000): Promise<string> {
+export async function waitForInfoviewHtml(infoView: InfoProvider, toFind : string, retries=30, delay=1000, expand=true): Promise<string> {
     let count = 0;
     let html = '';
     while (count < retries){
@@ -187,7 +204,7 @@ export async function waitForInfoviewHtml(infoView: InfoProvider, toFind : strin
         if (html.indexOf(toFind) > 0){
             return html;
         }
-        if (html.indexOf('<details>') >= 0) { // we want '<details open>' instead...
+        if (expand && html.indexOf('<details>') >= 0) { // we want '<details open>' instead...
             await infoView.toggleAllMessages();
         }
         await sleep(delay);
@@ -199,7 +216,27 @@ export async function waitForInfoviewHtml(infoView: InfoProvider, toFind : strin
     assert(false, `Missing "${toFind}" in infoview`);
 }
 
-export async function waitForDocViewHtml(docView: DocViewProvider, toFind : string, retries=10, delay=1000): Promise<string> {
+export async function waitForInfoviewNotHtml(infoView: InfoProvider, toFind : string, retries=30, delay=1000, collapse=true): Promise<void> {
+    let count = 0;
+    let html = '';
+    while (count < retries){
+        html = await infoView.getHtmlContents();
+        if (html.indexOf(toFind) < 0){
+            return;
+        }
+        if (collapse && html.indexOf('<details ') >= 0) { // we want '<details>' instead...(collapsed)
+            await infoView.toggleAllMessages();
+        }
+        await sleep(delay);
+        count += 1;
+    }
+
+    console.log(`>>> infoview still contains "${toFind}"`);
+    console.log(html);
+    assert(false, `Text "${toFind}" in infoview is not going away`);
+}
+
+export async function waitForDocViewHtml(docView: DocViewProvider, toFind : string, retries=30, delay=1000): Promise<string> {
     let count = 0;
     let html = '';
     while (count < retries){
@@ -230,7 +267,7 @@ export function extractPhrase(html: string, word: string, terminator: string){
     return '';
 }
 
-export async function findWord(editor: vscode.TextEditor, word: string, retries = 10, delay = 1000) : Promise<vscode.Range> {
+export async function findWord(editor: vscode.TextEditor, word: string, retries=30, delay=1000) : Promise<vscode.Range> {
     let count = 0;
     while (retries > 0) {
             const text = editor.document.getText();
@@ -246,7 +283,7 @@ export async function findWord(editor: vscode.TextEditor, word: string, retries 
     assert(false, `word ${word} not found in editor`);
 }
 
-export async function gotoDefinition(editor: vscode.TextEditor, word: string, retries = 10, delay = 1000) : Promise<void> {
+export async function gotoDefinition(editor: vscode.TextEditor, word: string, retries=30, delay=1000) : Promise<void> {
     const wordRange = await findWord(editor, word, retries, delay);
 
     // The -1 is to workaround a bug in goto definition.
@@ -257,7 +294,7 @@ export async function gotoDefinition(editor: vscode.TextEditor, word: string, re
     await vscode.commands.executeCommand('editor.action.revealDefinition');
 }
 
-export async function restartLeanServer(client: LeanClient, retries=10, delay=1000) : Promise<boolean> {
+export async function restartLeanServer(client: LeanClient, retries=30, delay=1000) : Promise<boolean> {
     let count = 0;
     console.log('restarting lean client ...');
 
@@ -279,19 +316,16 @@ export async function restartLeanServer(client: LeanClient, retries=10, delay=10
 
     // check we have no errors.
     const actual = stateChanges.toString();
-    assert(actual === 'stopped,restarted');
+    const expected = 'stopped,restarted'
+    if (actual !== expected) {
+        console.log(`restartServer did not produce expected result: ${actual}`);
+    }
+    assert(actual === expected);
     return false;
 }
 
 export async function assertStringInInfoview(infoView: InfoProvider, expectedVersion: string) : Promise<string> {
-    const html = await waitForInfoviewHtml(infoView, expectedVersion);
-    const pos = html.indexOf(expectedVersion);
-    if (pos >= 0) {
-        // e.g. 4.0.0-nightly-2022-02-16
-        const versionString = html.substring(pos, pos + 24)
-        console.log(`>>> Found default "${versionString}" in infoview`)
-    }
-    return html;
+    return await waitForInfoviewHtml(infoView, expectedVersion);
 }
 
 export async function invokeHrefCommand(html: string, selector: string) : Promise<void> {
@@ -309,8 +343,34 @@ export async function invokeHrefCommand(html: string, selector: string) : Promis
             const query = decodeURIComponent(uri.query);
             console.log(`Opening file : ${query}`);
             const args = JSON.parse(query);
-            await vscode.commands.executeCommand(uri.path.slice(1), args);
+            let arg : string = ''
+            if (Array.isArray(args)){
+                arg = args[0]
+            } else {
+                arg = args
+            }
+            await vscode.commands.executeCommand(uri.path.slice(1), arg);
         }
     }
 
 }
+
+export async function clickInfoViewButton(info: InfoProvider, name: string) : Promise<void> {
+    await assertStringInInfoview(info, name);
+    let retries = 5;
+    while (retries > 0) {
+        retries--;
+        try {
+            const cmd = `document.querySelector(\'[data-id*="${name}"]\').click()`;
+            await info.runTestScript(cmd);
+        } catch (err){
+            console.log(`### runTestScript failed: ${err.message}`);
+            if (retries === 0){
+                throw err;
+            }
+            console.log(`### Retrying clickInfoViewButton ${name}...`)
+            await sleep(1000);
+        }
+    }
+}
+

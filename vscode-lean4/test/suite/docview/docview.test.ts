@@ -3,8 +3,12 @@ import { suite } from 'mocha';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-import { initLean4, waitForActiveEditor, waitForInfoviewHtml,
+import { initLean4, waitForActiveEditor, waitForInfoviewHtml, closeAllEditors,
 	extractPhrase, waitForDocViewHtml, invokeHrefCommand } from '../utils/helpers';
+
+function delay(ms: number) {
+    return new Promise( resolve => setTimeout(resolve, ms) );
+}
 
 suite('Documentation View Test Suite', () => {
 
@@ -28,8 +32,18 @@ suite('Documentation View Test Suite', () => {
 
         const docView = lean.exports.docView;
         assert(docView, 'No docView export');
-        const exampleLink = 'Example';
-        html = await waitForDocViewHtml(docView, exampleLink);
+        const expectedMenuItem = 'Abbreviations cheat sheet';
+        html = await waitForDocViewHtml(docView, expectedMenuItem);
+
+        // invoke the TPIL link
+        await invokeHrefCommand(html, 'a[href*="theorem_proving_in_lean4"]');
+        html = await waitForDocViewHtml(docView, 'Computers and Theorem Proving');
+        await delay(1000); // just so we can see it while debugging
+
+        // go back to menu
+        await invokeHrefCommand(html, 'a[href*="lean4.docView.back"]');
+        html = await waitForDocViewHtml(docView, expectedMenuItem);
+        await delay(1000); // just so we can see it while debugging
 
         // invoke the command in the <a> tag with href containing 'openExample
         await invokeHrefCommand(html, 'a[href*="openExample"]')
@@ -42,7 +56,7 @@ suite('Documentation View Test Suite', () => {
         await waitForInfoviewHtml(info, exampleOuput);
 
         // make sure test is always run in predictable state, which is no file or folder open
-        await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+        await closeAllEditors();
 
     }).timeout(60000);
 

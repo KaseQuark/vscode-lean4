@@ -4,6 +4,8 @@ This extension provides VSCode editor support for the Lean 4 programming languag
 all new [Language Server](https://docs.microsoft.com/en-us/visualstudio/extensibility/language-server-protocol)
 implemented in Lean.
 
+See [Quick Start Demo Video](https://www.youtube.com/watch?v=yZo6k48L0VY).
+
 ## Installing the extension and Lean 4
 1. Install the extension from the [marketplace](https://marketplace.visualstudio.com/items?itemName=leanprover.lean4).
 1. Create a new folder called `foo` and add a file named `hello.lean`
@@ -140,6 +142,7 @@ You can also disable auto-opening behavior using the setting `lean4.infoViewAuto
   | ![pause](vscode-lean4/media/pause.png) | Prevent the tactic state widget from updating when the file is edited. When paused you will see the following addition icons show up.
   | ![continue](vscode-lean4/media/continue.png) | Once paused you can then click this icon to resume updates. |
   | ![update](vscode-lean4/media/update.png) | Refresh the tactic state of the pinned widget. |
+  | ![sort](vscode-lean4/media/sort.png) | Reverse the order of the lists under Tactic State.  |
 
 (7). Types in the context can be examined in the tactic state widget using mouse hover:
 
@@ -155,6 +158,8 @@ This extension contributes the following settings (for a complete list, open the
 ### Server settings
 
 * `lean4.toolchainPath`: specifies the location  of the Lean toolchain to be used when starting the Lean language server. Most users (i.e. those using `elan`) should not ever need to change this. If you are bundling Lean and `vscode-lean` with [Portable mode VS Code](https://code.visualstudio.com/docs/editor/portable), you might find it useful to specify a relative path to Lean. This can be done by starting this setting string with `%extensionPath%`; the extension will replace this with the absolute path of the extension folder. For example, with the default directory setup in Portable mode, `%extensionPath%/../../../lean` will point to `lean` in the same folder as the VS Code executable / application.
+
+* `lean4.lakePath`: specifies the location of the Lake executable to be used when starting the Lean language server (when possible). If left unspecified, the extension defaults to the Lake executable bundled with the Lean toolchain. Most users thus do not need to use this setting. It is only really helpful if you are building a Lake executable from the source and wish to use it with this extension.
 
 * `lean4.serverEnv`: specifies any Environment variables to add to the Lean 4 language server environment.  Note that when opening a [remote folder](https://code.visualstudio.com/docs/remote/ssh) using VS Code the Lean 4 language server will be running on that remote machine.
 
@@ -187,14 +192,6 @@ name of the relative path to the store the logs.
 * `lean4.infoViewAutoOpen`: controls whether the Infoview is automatically displayed when the Lean extension is activated for the first time in a given VS Code workspace(`true` by default).  If you manually close the Infoview it will stay closed for that workspace until.  You can then open it again using the <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> `Lean 4: Infoview: Display Goal` command.
 
 * `lean4.infoViewAutoOpenShowGoal`: auto open shows goal and messages for the current line (instead of all messages for the whole file).  In this mode the Infoview updates often every time you move the cursor to a different position so it can show context sensitive information.  Default is `true`.
-
-* `lean4.infoViewTacticStateFilters`: An array of objects containing regular expression strings that can be used to filter (positively or negatively) the plain text tactic state in the Infoview. Set to an empty array `[]` to hide the filter select dropdown. Each object must contain the following keys:
-  - `regex` is a properly-escaped regex string,
-  - `match` is a boolean, where `true` (`false`) means blocks in the tactic state matching `regex` will be included (excluded) in the Infoview,
-  - `flags` are additional flags passed to the [JavaScript RegExp constructor](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp).
-  - The `name` key is optional and may contain a string that is displayed in the dropdown instead of the full regex details.
-
-* `lean4.infoViewFilterIndex`: Index of the filter applied to the tactic state (in the array infoViewTacticStateFilters). An index of -1 means no filter is applied (which is the default for this setting).
 
 * `lean4.infoViewAllErrorsOnLine`: show all errors on the current line, instead of just the ones on the right of the cursor, default `true`.
 
