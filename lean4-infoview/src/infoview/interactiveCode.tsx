@@ -98,9 +98,22 @@ function TypePopupContents({ pos, info, redrawTooltip }: TypePopupContentsProps)
 /** Tagged spans can be hovered over to display extra info stored in the associated `SubexprInfo`. */
 function InteractiveCodeTag({pos, tag: ct, fmt}: InteractiveTagProps<SubexprInfo>) {
   const mkTooltip = React.useCallback((redrawTooltip: () => void) =>
+  <div className="font-code tl pre-wrap">
     <TypePopupContents pos={pos} info={ct}
         redrawTooltip={redrawTooltip} />
-    , [pos.uri, pos.line, pos.character, ct.info])
+    <button onClick={async e => {
+        e.preventDefault()
+        const commands = getConvZoomCommands(rs, pos, ct)
+        try {
+          const comm = await commands
+          //await ec.insertZoomCommands(comm?.commands ?? 'could not get commands')
+        } catch (err: any) {
+          const errS = typeof err === 'string' ? err : JSON.stringify(err);
+          //await ec.insertZoomCommands(errS)
+        }
+      }
+    }>Zoom</button>
+  </div>, [pos.uri, pos.line, pos.character, ct.info])
 
   // We mimick the VSCode ctrl-hover and ctrl-click UI for go-to-definition
   const rs = React.useContext(RpcContext)
@@ -147,18 +160,6 @@ function InteractiveCodeTag({pos, tag: ct, fmt}: InteractiveTagProps<SubexprInfo
       >
         <InteractiveCode pos={pos} fmt={fmt} />
       </DetectHoverSpan>
-      <button onClick={async e => {
-        e.preventDefault()
-        const commands = getConvZoomCommands(rs, pos, ct)
-        try {
-          const comm = await commands
-          //await ec.insertZoomCommands(comm?.commands ?? 'could not get commands')
-        } catch (err: any) {
-          const errS = typeof err === 'string' ? err : JSON.stringify(err);
-          await ec.insertZoomCommands(errS)
-        }
-      }
-      }>Zoom</button>
     </WithTooltipOnHover>
   )
 }
