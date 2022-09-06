@@ -79,7 +79,7 @@ export function getInteractiveTermGoal(rs: RpcSessionAtPos, pos: TextDocumentPos
 
 export async function getConvZoomCommands(rs: RpcSessionAtPos, exprParam: SubexprInfo): Promise<ConvZoomCommands | undefined> {
     const params: ConvZoomParams = {expr: exprParam}
-    const ret = await rs.call('Lean.Widget.getConvZoomCommands', params)
+    const ret = await rs.call<ConvZoomParams, ConvZoomCommands>('Lean.Widget.getConvZoomCommands', params)
     if (ret) return ret
 }
 
