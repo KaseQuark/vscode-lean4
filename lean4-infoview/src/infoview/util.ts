@@ -2,7 +2,7 @@
 import * as React from 'react';
 import type { DocumentUri, Position, Range, TextDocumentPositionParams } from 'vscode-languageserver-protocol';
 
-import { isRpcError, RpcErrorCode } from '@lean4/infoview-api';
+import { isRpcError, RpcErrorCode } from '@leanprover/infoview-api';
 
 import { Event } from './event';
 import { EditorContext } from './contexts';
@@ -279,78 +279,59 @@ export function mapRpcError(err : unknown) : Error {
     }
 }
 
-type Status = 'pending' | 'fulfilled' | 'rejected'
-
-
-function useAsyncThrottled<T>(fn : () => Promise<T>, deps : React.DependencyList = [])
-  : [Status, T | undefined, unknown | undefined] {
-    const [result, setResult] = React.useState<T | undefined>(undefined)
-    const [error, setError] = React.useState<unknown | undefined>(undefined)
-    // state that is used to trigger the effect
-    const [trig, setTrig] = React.useState(0)
-    // true when fn should be re-run after resolution of current promise.
-    const retrig = React.useRef(false)
-    const init = React.useRef(true)
-    const status = React.useRef<Status>('pending')
-
-    React.useEffect(function () {
-      if (status.current === 'pending' && !init.current) {
-        // A task is already in flight, rather than
-        // spawning a task for each trigger of the effect,
-        // we mark that the effect should be retriggered and run again
-        // at the end of the promise.
-        retrig.current = true
-        return
-      }
-      init.current = false
-      status.current = 'pending'
-      setError(undefined)
-      fn().then(result => {
-          status.current = 'fulfilled'
-          setResult(result)
-          setError(undefined)
-      }, (err : any) => {
-          status.current = 'rejected'
-          setError(err)
-      }).finally(() => {
-        if (retrig.current) {
-          retrig.current = false
-          // note we can't call `go` directly, because `fn` may have changed and deps may have changed.
-          setTrig(trig + 1)
-        }
-      })
-    }, [...deps, trig])
-    return [status.current, result, error]
+/** Catch handler for RPC methods that just returns undefined if the method is not found.
+ * This is useful for compatibility with versions of Lean that do not yet have the given RPC method.
+*/
+ export function discardMethodNotFound(e: unknown) : undefined {
+  if (isRpcError(e) && (e.code === RpcErrorCode.MethodNotFound)) {
+    return undefined
+  } else {
+      throw mapRpcError(e)
+  }
 }
 
-function useAsyncUnthrottled<T>(fn : () => Promise<T>, deps : React.DependencyList = []) : [Status, T | undefined, unknown | undefined] {
-  const idCount = React.useRef(0)
-  const latestResolved = React.useRef(0)
-  const [status, setStatus] = React.useState<Status>('pending')
-  const [error, setError] = React.useState<unknown>(undefined)
-  const [result, setResult] = React.useState<T | undefined>(undefined)
-  React.useEffect(() => {
-    idCount.current += 1
-    const taskId = idCount.current
-    setStatus('pending')
-    setError(undefined)
-    fn().then(result => {
-      if (latestResolved.current > taskId) {
-        return
+export type AsyncState<T> =
+  { state: 'loading' } |
+  { state: 'resolved', value: T } |
+  { state: 'rejected', error: any }
+
+export type AsyncWithTriggerState<T> =
+  { state: 'notStarted' } | AsyncState<T>
+
+export function useAsyncWithTrigger<T>(fn: () => Promise<T>, deps: React.DependencyList = []): [AsyncWithTriggerState<T>, () => void] {
+  const asyncState = React.useRef<AsyncWithTriggerState<T>>({state: 'notStarted'})
+  const asyncStateDeps = React.useRef<React.DependencyList>([])
+  const tick = React.useRef(0)
+  const [_, setUpdate] = React.useState(0)
+
+  const trigger = React.useCallback(() => {
+    if (asyncState.current.state === 'loading' || asyncState.current.state === 'resolved')
+      return;
+
+    tick.current += 1
+    asyncState.current = { state: 'loading' }
+    setUpdate(tick.current)
+
+    tick.current += 1
+    const startTick = tick.current
+    const set = (state: AsyncWithTriggerState<T>) => {
+      if (tick.current === startTick) {
+        asyncState.current = state
+        setUpdate(tick.current)
       }
-      setStatus('fulfilled')
-      setResult(result)
-      latestResolved.current = taskId
-    }, (err : any) => {
-      if (latestResolved.current > taskId) {
-        return
-      }
-      setStatus('rejected')
-      setError(err)
-      latestResolved.current = taskId
-    })
-  }, deps)
-  return [status, result, error]
+    }
+    fn().then(
+      value => set({state: 'resolved', value}),
+      error => set({state: 'rejected', error}),
+    )
+  }, deps);
+
+  if (!asyncStateDeps.current.every((d, i) => Object.is(d, deps[i]))) {
+    tick.current += 1
+    asyncState.current = {state: 'notStarted'}
+    asyncStateDeps.current = deps
+  }
+  return [asyncState.current, trigger]
 }
 
 /** This React hook will run the given promise function `fn` whenever the deps change
@@ -366,21 +347,15 @@ function useAsyncUnthrottled<T>(fn : () => Promise<T>, deps : React.DependencyLi
  *
  * Without `useAsync` we would now return the diagnostics for line 42 even though we're at line 90.
  *
- * There is a 'throttled' and 'unthrottled' version of this function:
- * - in _throttled_ `throttle = true`:
- *   There will only ever be one in-flight promise at a time. If the deps
- *   change while a promise is still in-flight, then `fn` will be run
- *   again after the first promise has resolved.
- * - in _unthrottled_ `throttle = false`:
- *   `fn` will be fired as soon as the dependencies change. Each invocation of
- *   `fn` is time ordered. If an earlier invocation resolves after a
- *   later invocation (as happens in above example), then this result is discarded.
+ * When the deps change, the function immediately returns `{ state: 'loading' }`.
  */
-export function useAsync<T>(fn : () => Promise<T>, deps : React.DependencyList = [], throttle = false): [Status, T | undefined, unknown | undefined] {
-  if (throttle) {
-    return useAsyncThrottled(fn, deps)
+export function useAsync<T>(fn: () => Promise<T>, deps: React.DependencyList = []): AsyncState<T> {
+  const [state, trigger] = useAsyncWithTrigger(fn, deps)
+  if (state.state === 'notStarted') {
+    trigger()
+    return {state: 'loading'}
   } else {
-    return useAsyncUnthrottled(fn, deps)
+    return state
   }
 }
 

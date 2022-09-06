@@ -1,7 +1,7 @@
 import { OutputChannel } from 'vscode'
 import { spawn } from 'child_process';
-import { findProgramInPath } from '../config'
-import * as fs from 'fs';
+import { findProgramInPath, isRunningTest } from '../config'
+import { logger } from './logger'
 
 export async function batchExecute(
     executablePath: string,
@@ -16,16 +16,18 @@ export async function batchExecute(
             options = { cwd: workingDirectory };
         }
 
-        // The mocha test framework listens to process.on('uncaughtException')
-        // which is raised if spawn cannot find the command and the test automatically
-        // fails with "Uncaught Error: spawn elan ENOENT".  Therefore we manually
-        // check if the command exists so as not to trigger that exception.
-
         try {
-            const fullPath = findProgramInPath(executablePath);
-            if (!fullPath) {
-                resolve(undefined);
-                return;
+            if (isRunningTest())
+            {
+                // The mocha test framework listens to process.on('uncaughtException')
+                // which is raised if spawn cannot find the command and the test automatically
+                // fails with "Uncaught Error: spawn elan ENOENT".  Therefore we manually
+                // check if the command exists so as not to trigger that exception.
+                const fullPath = findProgramInPath(executablePath);
+                if (!fullPath) {
+                    resolve(undefined);
+                    return;
+                }
             }
             const proc = spawn(executablePath, args, options);
 
@@ -47,12 +49,12 @@ export async function batchExecute(
             });
 
             proc.on('close', (code) => {
-                console.log(`child process exited with code ${code}`);
+                logger.log(`child process exited with code ${code}`);
                 resolve(output)
             });
 
         } catch (e){
-            console.log(`error running ${executablePath} : ${e}`);
+            logger.log(`error running ${executablePath} : ${e}`);
             resolve(undefined);
         }
     });

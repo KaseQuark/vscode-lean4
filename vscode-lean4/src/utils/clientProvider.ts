@@ -3,10 +3,12 @@ import { LocalStorageService} from './localStorage'
 import { LeanInstaller, LeanVersion } from './leanInstaller'
 import { LeanpkgService } from './leanpkg';
 import { LeanClient } from '../leanclient'
-import { LeanFileProgressProcessingInfo, RpcConnectParams, RpcKeepAliveParams } from '@lean4/infoview-api';
+import { LeanFileProgressProcessingInfo, RpcConnectParams, RpcKeepAliveParams, ServerStoppedReason } from '@leanprover/infoview-api';
 import * as path from 'path';
 import { findLeanPackageRoot } from './projectInfo';
 import { isFileInFolder } from './fsHelper';
+import { logger } from './logger'
+import { addDefaultElanPath, getDefaultElanPath, addToolchainBinPath, isElanDisabled, isRunningTest } from '../config'
 
 // This class ensures we have one LeanClient per workspace folder.
 export class LeanClientProvider implements Disposable {
@@ -30,7 +32,7 @@ export class LeanClientProvider implements Disposable {
     private clientRemovedEmitter = new EventEmitter<LeanClient>()
     clientRemoved = this.clientRemovedEmitter.event
 
-    private clientStoppedEmitter = new EventEmitter<[LeanClient, boolean, string]>()
+    private clientStoppedEmitter = new EventEmitter<[LeanClient, boolean, ServerStoppedReason]>()
     clientStopped = this.clientStoppedEmitter.event
 
     constructor(localStorage : LocalStorageService, installer : LeanInstaller, pkgService : LeanpkgService, outputChannel : OutputChannel) {
@@ -39,6 +41,9 @@ export class LeanClientProvider implements Disposable {
         this.installer = installer;
         this.pkgService = pkgService;
 
+        // we must setup the installChanged event handler first before any didOpenEditor calls.
+        installer.installChanged(async (uri: Uri) => await this.onInstallChanged(uri));
+        installer.promptingInstall(async (uri: Uri) => await this.onPromptingInstall(uri));
         // Only change the document language for *visible* documents,
         // because this closes and then reopens the document.
         window.visibleTextEditors.forEach((e) => this.didOpenEditor(e.document));
@@ -58,6 +63,7 @@ export class LeanClientProvider implements Disposable {
                 const key = this.getKeyFromUri(folder.uri);
                 const client = this.clients.get(key);
                 if (client) {
+                    logger.log(`[ClientProvider] onDidChangeWorkspaceFolders removing client for ${key}`);
                     this.clients.delete(key);
                     this.versions.delete(key);
                     client.dispose();
@@ -65,44 +71,62 @@ export class LeanClientProvider implements Disposable {
                 }
             }
         });
-
-        installer.installChanged(async (uri: Uri) => {
-            // This Uri could be 'undefined' in the case of a selectToolChain "reset"
-            // Or it could be a package Uri in the case a lean package file was changed
-            // or it could be a document Uri in the case of a command from
-            // selectToolchainForActiveEditor.
-            const key = this.getKeyFromUri(uri);
-            const path = uri.toString();
-            if (this.testing.has(key)) {
-                console.log(`Blocking re-entrancy on ${path}`);
-                return;
-            }
-            // avoid re-entrancy since testLeanVersion can take a while.
-            this.testing.set(key, true);
-            try {
-                // have to check again here in case elan install had --default-toolchain none.
-                const [workspaceFolder, folder, packageFileUri] = await findLeanPackageRoot(uri);
-                const packageUri = folder ? folder : Uri.from({scheme: 'untitled'});
-                const version = await installer.testLeanVersion(packageUri);
-                if (version.version === '4') {
-                    const [cached, client] = await this.ensureClient(uri, version);
-                    if (cached && client) {
-                        await client.restart();
-                    }
-                } else if (version.error) {
-                    console.log(`Lean version not ok: ${version.error}`);
-                }
-            } catch (e) {
-                console.log(`Exception checking lean version: ${e}`);
-            }
-            this.testing.delete(key);
-        });
     }
 
     getActiveClient() : LeanClient | undefined {
         return this.activeClient;
     }
 
+    private async onInstallChanged(uri: Uri){
+        // This Uri could be 'undefined' in the case of a selectToolChain "reset"
+        // Or it could be a package Uri in the case a lean package file was changed
+        // or it could be a document Uri in the case of a command from
+        // selectToolchainForActiveEditor.
+        logger.log(`[ClientProvider] installChanged for ${uri}`);
+        const key = this.getKeyFromUri(uri);
+        const path = uri.toString();
+        if (this.testing.has(key)) {
+            logger.log(`[ClientProvider] Blocking re-entrancy on ${path}`);
+            return;
+        }
+        // avoid re-entrancy since testLeanVersion can take a while.
+        this.testing.set(key, true);
+        try {
+            // have to check again here in case elan install had --default-toolchain none.
+            const [workspaceFolder, folder, packageFileUri] = await findLeanPackageRoot(uri);
+            const packageUri = folder ? folder : Uri.from({scheme: 'untitled'});
+            logger.log('[ClientProvider] testLeanVersion');
+            const version = await this.installer.testLeanVersion(packageUri);
+            if (version.version === '4') {
+                logger.log('[ClientProvider] got lean version 4');
+                const [cached, client] = await this.ensureClient(uri, version);
+                if (cached && client) {
+                    await client.restart();
+                    logger.log('[ClientProvider] restart complete');
+                }
+            } else if (version.error) {
+                logger.log(`[ClientProvider] Lean version not ok: ${version.error}`);
+            }
+        } catch (e) {
+            logger.log(`[ClientProvider] Exception checking lean version: ${e}`);
+        }
+        this.testing.delete(key);
+    }
+
+    private async onPromptingInstall(uri: Uri) : Promise<void> {
+        if (isRunningTest()){
+            // no prompt, just do it!
+            logger.log('[ClientProvider] Installing Lean via Elan during testing')
+            await this.installer.installElan();
+            if (isElanDisabled()) {
+                addToolchainBinPath(getDefaultElanPath());
+            } else {
+                addDefaultElanPath();
+            }
+            await this.onInstallChanged(uri);
+        }
+
+    }
     private getVisibleEditor(uri: Uri) : TextEditor | null {
         const path = uri.toString();
         for (const editor of window.visibleTextEditors) {
@@ -114,7 +138,7 @@ export class LeanClientProvider implements Disposable {
     }
 
     private restartFile() {
-        if (window.activeTextEditor && this.activeClient) {
+        if (window.activeTextEditor && this.activeClient && window.activeTextEditor.document.languageId ==='lean4') {
             void this.activeClient.restartFile(window.activeTextEditor.document);
         }
     }
@@ -164,7 +188,7 @@ export class LeanClientProvider implements Disposable {
                 await client.openLean4Document(document)
             }
         } catch (e) {
-            console.log(`### Error opening document: ${e}`);
+            logger.log(`[ClientProvider] ### Error opening document: ${e}`);
         }
     }
 
@@ -241,9 +265,16 @@ export class LeanClientProvider implements Disposable {
         let client = this.getClientForFolder(folderUri);
         const key = this.getKeyFromUri(folder);
         const cachedClient = (client !== undefined);
-        if (!client && !this.pending.has(key)) {
+        if (!client) {
+            if (this.pending.has(key)) {
+                logger.log('[ClientProvider] ignoring ensureClient already pending on ' + folderUri.toString());
+                return [cachedClient, client];
+            }
+
             this.pending.set(key, true);
-            console.log('Creating LeanClient for ' + folderUri.toString());
+            logger.log('[ClientProvider] Creating LeanClient for ' + folderUri.toString());
+
+            const elanDefaultToolchain = await this.installer.getElanDefaultToolchain(folderUri);
 
             // We must create a Client before doing the long running testLeanVersion
             // so that ensureClient callers have an "optimistic" client to work with.
@@ -251,7 +282,7 @@ export class LeanClientProvider implements Disposable {
             // every open file.  A workspace could have multiple files open and we want
             // to remember all those open files are associated with this client before
             // testLeanVersion has completed.
-            client = new LeanClient(workspaceFolder, folderUri, this.localStorage, this.outputChannel);
+            client = new LeanClient(workspaceFolder, folderUri, this.localStorage, this.outputChannel, elanDefaultToolchain);
             this.subscriptions.push(client);
             this.clients.set(key, client);
 
@@ -260,7 +291,7 @@ export class LeanClientProvider implements Disposable {
             }
             if (versionInfo && versionInfo.version && versionInfo.version !== '4') {
                 // ignore workspaces that belong to a different version of Lean.
-                console.log(`Lean4 extension ignoring workspace '${folderUri}' because it is not a Lean 4 workspace.`);
+                logger.log(`[ClientProvider] Lean4 extension ignoring workspace '${folderUri}' because it is not a Lean 4 workspace.`);
                 this.pending.delete(key);
                 this.clients.delete(key);
                 client.dispose();
@@ -269,16 +300,17 @@ export class LeanClientProvider implements Disposable {
 
             client.serverFailed((err) => {
                 // forget this client!
+                logger.log(`[ClientProvider] serverFailed, removing client for ${key}`);
                 const cached = this.clients.get(key);
                 this.clients.delete(key);
                 cached?.dispose();
                 void window.showErrorMessage(err);
             });
 
-            client.stopped(err => {
+            client.stopped(reason => {
                 if (client) {
                     // fires a message in case a client is stopped unexpectedly
-                    this.clientStoppedEmitter.fire([client, client === this.activeClient, err]);
+                    this.clientStoppedEmitter.fire([client, client === this.activeClient, reason]);
                 }
             });
 
@@ -288,6 +320,7 @@ export class LeanClientProvider implements Disposable {
             });
 
             this.pending.delete(key);
+            logger.log('[ClientProvider] firing clientAddedEmitter event');
             this.clientAddedEmitter.fire(client);
 
             if (versionInfo && !versionInfo.error) {
@@ -306,5 +339,4 @@ export class LeanClientProvider implements Disposable {
     dispose(): void {
         for (const s of this.subscriptions) { s.dispose(); }
     }
-
 }

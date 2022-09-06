@@ -7,10 +7,11 @@ import { LocalStorageService} from './utils/localStorage'
 import { LeanInstaller } from './utils/leanInstaller'
 import { LeanpkgService } from './utils/leanpkg';
 import { LeanClientProvider } from './utils/clientProvider';
-import { addDefaultElanPath, removeElanPath, addToolchainBinPath} from './config';
+import { addDefaultElanPath, removeElanPath, addToolchainBinPath, isElanDisabled} from './config';
 import { dirname, basename } from 'path';
 import { findLeanPackageVersionInfo } from './utils/projectInfo';
 import { Exports } from './exports';
+import { logger } from './utils/logger'
 
 function isLean(languageId : string) : boolean {
     return languageId === 'lean' || languageId === 'lean4';
@@ -40,7 +41,7 @@ function getLeanDocument() : TextDocument | undefined {
 export async function activate(context: ExtensionContext): Promise<Exports> {
 
     // for unit test that tests behavior when there is no elan installed.
-    if (typeof(process.env.DISABLE_ELAN) === 'string') {
+    if (isElanDisabled()) {
         const elanRoot = removeElanPath();
         if (elanRoot){
             addToolchainBinPath(elanRoot);
@@ -59,7 +60,7 @@ export async function activate(context: ExtensionContext): Promise<Exports> {
     if (doc) {
         [packageUri, toolchainVersion] = await findLeanPackageVersionInfo(doc.uri);
         if (toolchainVersion && toolchainVersion.indexOf('lean:3') > 0) {
-            console.log(`Lean4 skipping lean 3 project: ${toolchainVersion}`);
+            logger.log(`Lean4 skipping lean 3 project: ${toolchainVersion}`);
             return { isLean4Project: false, version: toolchainVersion,
                 infoProvider: undefined, clientProvider: undefined, installer: undefined, docView: undefined };
         }

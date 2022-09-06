@@ -1,6 +1,7 @@
 import { workspace } from 'vscode'
 import * as path from 'path';
 import * as fs from 'fs'
+import { logger } from './utils/logger'
 
 // TODO: does currently not contain config options for `./abbreviation`
 // so that it is easy to keep it in sync with vscode-lean.
@@ -42,21 +43,29 @@ export function addServerEnvPaths(input_env: NodeJS.ProcessEnv): NodeJS.ProcessE
     return env
 }
 
-export function addDefaultElanPath() : void {
-    const paths = getEnvPath();
+export function getDefaultElanPath() : string {
     let elanPath = ''
     if (process.platform === 'win32') {
         elanPath = process.env.USERPROFILE + '\\.elan\\bin';
     } else {
         elanPath = process.env.HOME + '/.elan/bin';
     }
+    return elanPath;
+}
 
+export function addDefaultElanPath() : void {
+    const paths = getEnvPath();
+    const elanPath = getDefaultElanPath();
     if (paths.indexOf(elanPath) < 0) {
         setEnvPath(paths + path.delimiter + elanPath);
     }
 }
 
 function findToolchainBin(root:string) : string{
+    logger.log(`Looking for toolchains in ${root}`)
+    if (!fs.existsSync(root)) {
+        return '';
+    }
     const toolchains = fs.readdirSync(path.join(root, '..', 'toolchains'));
     for(const toolchain of toolchains) {
         if (toolchain.indexOf('leanprover--lean4') >= 0){
@@ -75,6 +84,9 @@ export function addToolchainBinPath(elanPath: string){
 }
 
 export function findProgramInPath(name: string) : string {
+    if (fs.existsSync(name)) {
+        return name;
+    }
     const extensions : string[] = [];
     if (process.platform === 'win32') {
        extensions.push('.exe')
@@ -101,7 +113,7 @@ export function removeElanPath() : string {
     for (let i = 0; i < parts.length; ) {
          const part = parts[i]
          if (part.indexOf('.elan') > 0){
-            console.log(`removing path to elan: ${part}`)
+            logger.log(`removing path to elan: ${part}`)
             result = part;
             parts.splice(i, 1);
          } else {
@@ -111,6 +123,11 @@ export function removeElanPath() : string {
 
     setEnvPath(joinEnvPath(parts));
     return result;
+}
+
+export function getPowerShellPath() : string {
+    const windir = process.env.windir
+    return `${windir}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
 }
 
 export function toolchainPath(): string {
@@ -145,6 +162,10 @@ export function serverLoggingPath(): string {
     return workspace.getConfiguration('lean4.serverLogging').get('path', '.')
 }
 
+export function shouldAutofocusOutput(): boolean {
+    return workspace.getConfiguration('lean4').get('autofocusOutput', false)
+}
+
 export function getInfoViewStyle(): string {
     return workspace.getConfiguration('lean4').get('infoViewStyle', '');
 }
@@ -170,6 +191,45 @@ export function getLeanExecutableName(): string {
         return 'lean.exe'
     }
     return 'lean'
+}
+
+export function isRunningTest() : boolean {
+    return typeof(process.env.TEST_FOLDER) === 'string';
+}
+
+export function getTestFolder() : string {
+    return typeof(process.env.TEST_FOLDER) === 'string' ? process.env.TEST_FOLDER : '';
+}
+
+export function isElanDisabled() : boolean {
+    return typeof(process.env.DISABLE_ELAN) === 'string';
+}
+
+/** The editor line height, in pixels. */
+export function getEditorLineHeight(): number {
+    // The implementation
+    // (recommended by Microsoft: https://github.com/microsoft/vscode/issues/125341#issuecomment-854812591)
+    // is absolutely cursed. It's just to copy whatever VSCode does internally.
+    const fontSize = workspace.getConfiguration('editor').get<number>('fontSize') ?? 0;
+    let lineHeight = workspace.getConfiguration('editor').get<number>('lineHeight') ?? 0;
+
+    const GOLDEN_LINE_HEIGHT_RATIO = process.platform === 'darwin' ? 1.5 : 1.35;
+    const MINIMUM_LINE_HEIGHT = 8;
+
+    if (lineHeight === 0) {
+		lineHeight = GOLDEN_LINE_HEIGHT_RATIO * fontSize;
+    } else if (lineHeight < MINIMUM_LINE_HEIGHT) {
+		// Values too small to be line heights in pixels are in ems.
+		lineHeight = lineHeight * fontSize;
+    }
+
+    // Enforce integer, minimum constraints
+    lineHeight = Math.round(lineHeight);
+    if (lineHeight < MINIMUM_LINE_HEIGHT) {
+        lineHeight = MINIMUM_LINE_HEIGHT;
+    }
+
+    return lineHeight;
 }
 
 /**
