@@ -1,14 +1,14 @@
 import * as React from 'react'
 
-import { EditorContext, RpcContext } from './contexts'
+import { EditorContext } from './contexts'
 import { DocumentPosition, useAsync, mapRpcError } from './util'
-import { SubexprInfo, CodeWithInfos, InteractiveDiagnostics_infoToInteractive, getGoToLocation, TaggedText, getConvZoomCommands } from './rpcInterface'
+import { SubexprInfo, CodeWithInfos, InteractiveDiagnostics_infoToInteractive, getGoToLocation, TaggedText, getConvZoomCommands } from '@leanprover/infoview-api'
 import { DetectHoverSpan, HoverState, WithTooltipOnHover } from './tooltips'
 import { Location } from 'vscode-languageserver-protocol'
 import { marked } from 'marked'
+import { RpcContext } from './rpcSessions'
 
 export interface InteractiveTextComponentProps<T> {
-  pos: DocumentPosition
   fmt: TaggedText<T>
 }
 
@@ -24,33 +24,29 @@ export interface InteractiveTaggedTextProps<T> extends InteractiveTextComponentP
  * Core loop to display `TaggedText` objects. Invokes `InnerTagUi` on `tag` nodes in order to support
  * various embedded information such as `InfoTree`s and `Expr`s.
  * */
-export function InteractiveTaggedText<T>({pos, fmt, InnerTagUi}: InteractiveTaggedTextProps<T>) {
+export function InteractiveTaggedText<T>({fmt, InnerTagUi}: InteractiveTaggedTextProps<T>) {
   if ('text' in fmt) return <>{fmt.text}</>
   else if ('append' in fmt) return <>
-    {fmt.append.map((a, i) => <InteractiveTaggedText key={i} pos={pos} fmt={a} InnerTagUi={InnerTagUi} />)}
+    {fmt.append.map((a, i) => <InteractiveTaggedText key={i} fmt={a} InnerTagUi={InnerTagUi} />)}
   </>
-  else if ('tag' in fmt) return <InnerTagUi pos={pos} fmt={fmt.tag[1]} tag={fmt.tag[0]} />
+  else if ('tag' in fmt) return <InnerTagUi fmt={fmt.tag[1]} tag={fmt.tag[0]} />
   else throw new Error(`malformed 'TaggedText': '${fmt}'`)
 }
 
 interface TypePopupContentsProps {
-  pos: DocumentPosition
   info: SubexprInfo
   redrawTooltip: () => void
 }
 
-function renderCodeBlock(lang: string, code: string) : string {
-  // todo: render Lean code blocks using the lean syntax.json
-  return `<div class="font-code tl pre-wrap">${code}</div>`
-}
-
-function renderMarkdown(doc: string){
+function Markdown({contents}: {contents: string}): JSX.Element {
   const renderer = new marked.Renderer();
   renderer.code = (code, lang) => {
-    const id : string = lang ? lang : '';
-    const formatted = renderCodeBlock(id, code);
-		return `<div data-code="${id}">${formatted}</div>`;
+    // todo: render Lean code blocks using the lean syntax.json
+    return `<div class="font-code pre-wrap">${code}</div>`;
 	}
+  renderer.codespan = (code) => {
+    return `<code class="font-code">${code}</code>`;
+  }
 
   const markedOptions: marked.MarkedOptions = {}
   markedOptions.sanitizer = (html: string): string => {
@@ -63,57 +59,56 @@ function renderMarkdown(doc: string){
   // todo: vscode also has lots of post render sanitization and hooking up of href clicks and so on.
   // see https://github.com/microsoft/vscode/blob/main/src/vs/base/browser/markdownRenderer.ts
 
-  const renderedMarkdown = marked.parse(doc, markedOptions);
-  return <div className="markdown-hover" dangerouslySetInnerHTML={{ __html: renderedMarkdown }} />
+  const renderedMarkdown = marked.parse(contents, markedOptions);
+  return <div dangerouslySetInnerHTML={{ __html: renderedMarkdown }} />
   // handy for debugging:
   // return <div>{ renderedMarkdown } </div>
 }
 
 /** Shows `explicitValue : itsType` and a docstring if there is one. */
-function TypePopupContents({ pos, info, redrawTooltip }: TypePopupContentsProps) {
+function TypePopupContents({ info, redrawTooltip }: TypePopupContentsProps) {
   const rs = React.useContext(RpcContext)
   // When `err` is defined we show the error,
   // otherwise if `ip` is defined we show its contents,
   // otherwise a 'loading' message.
-  const [_, ip, err] = useAsync(
-    () => InteractiveDiagnostics_infoToInteractive(rs, pos, info.info),
-    [rs, pos.uri, pos.line, pos.character, info.info, info.subexprPos])
+  const interactive = useAsync(
+    () => InteractiveDiagnostics_infoToInteractive(rs, info.info),
+    [rs, info.info, info.subexprPos])
 
   // We let the tooltip know to redo its layout whenever our contents change.
-  React.useEffect(() => redrawTooltip(), [ip, err, redrawTooltip])
+  React.useEffect(() => redrawTooltip(), [interactive.state, (interactive as any)?.value, (interactive as any)?.error, redrawTooltip])
 
-  return <div className="monaco-hover monaco-hover-content hover-div hover-row">
-    {ip && <>
+  return <div className="tooltip-code-content">
+    {interactive.state === 'resolved' ? <>
       <div className="font-code tl pre-wrap">
-      {ip.exprExplicit && <InteractiveCode pos={pos} fmt={ip.exprExplicit} />} : {ip.type && <InteractiveCode pos={pos} fmt={ip.type} />}
+      {interactive.value.exprExplicit && <InteractiveCode fmt={interactive.value.exprExplicit} />} : {
+        interactive.value.type && <InteractiveCode fmt={interactive.value.type} />}
       </div>
-      {ip.doc && <hr />}
-      {ip.doc && renderMarkdown(ip.doc)}
-    </>}
-    {err && <>Error: {mapRpcError(err).message}</>}
-    {(!ip && !err) && <>Loading..</>}
+      {interactive.value.doc && <><hr /><Markdown contents={interactive.value.doc}/></>}
+    </> :
+    interactive.state === 'rejected' ? <>Error: {mapRpcError(interactive.error).message}</> :
+    <>Loading..</>}
   </div>
 }
 
 /** Tagged spans can be hovered over to display extra info stored in the associated `SubexprInfo`. */
-function InteractiveCodeTag({pos, tag: ct, fmt}: InteractiveTagProps<SubexprInfo>) {
+function InteractiveCodeTag({tag: ct, fmt}: InteractiveTagProps<SubexprInfo>) {
   const mkTooltip = React.useCallback((redrawTooltip: () => void) =>
   <div className="font-code tl pre-wrap">
-    <TypePopupContents pos={pos} info={ct}
-        redrawTooltip={redrawTooltip} />
+    <TypePopupContents info={ct} redrawTooltip={redrawTooltip} />
     <button onClick={async e => {
         e.preventDefault()
-        const commands = getConvZoomCommands(rs, pos, ct)
+        const commands = getConvZoomCommands(rs, ct)
         try {
           const comm = await commands
-          //await ec.insertZoomCommands(comm?.commands ?? 'could not get commands')
         } catch (err: any) {
           const errS = typeof err === 'string' ? err : JSON.stringify(err);
-          //await ec.insertZoomCommands(errS)
         }
       }
     }>Zoom</button>
-  </div>, [pos.uri, pos.line, pos.character, ct.info])
+    </div>, [ct.info])
+    //<TypePopupContents info={ct} redrawTooltip={redrawTooltip} />,
+    //[ct.info])
 
   // We mimick the VSCode ctrl-hover and ctrl-click UI for go-to-definition
   const rs = React.useContext(RpcContext)
@@ -124,8 +119,8 @@ function InteractiveCodeTag({pos, tag: ct, fmt}: InteractiveTagProps<SubexprInfo
   const fetchGoToLoc = React.useCallback(async () => {
     if (goToLoc !== undefined) return goToLoc
     try {
-      const lnks = await getGoToLocation(rs, pos, 'definition', ct.info)
-      if (lnks !== undefined && lnks.length > 0) {
+      const lnks = await getGoToLocation(rs, 'definition', ct.info)
+      if (lnks.length > 0) {
         const loc = { uri: lnks[0].targetUri, range: lnks[0].targetSelectionRange }
         setGoToLoc(loc)
         return loc
@@ -134,7 +129,7 @@ function InteractiveCodeTag({pos, tag: ct, fmt}: InteractiveTagProps<SubexprInfo
       console.error('Error in go-to-definition: ', JSON.stringify(e))
     }
     return undefined
-  }, [rs, pos.uri, pos.line, pos.character, ct.info, goToLoc])
+  }, [rs, ct.info, goToLoc])
   React.useEffect(() => { if (hoverState === 'ctrlOver') void fetchGoToLoc() }, [hoverState])
 
   return (
@@ -158,17 +153,17 @@ function InteractiveCodeTag({pos, tag: ct, fmt}: InteractiveTagProps<SubexprInfo
                     + (hoverState !== 'off' ? 'highlight ' : '')
                     + (hoverState === 'ctrlOver' && goToLoc !== undefined ? 'underline ' : '')}
       >
-        <InteractiveCode pos={pos} fmt={fmt} />
+        <InteractiveCode fmt={fmt} />
       </DetectHoverSpan>
     </WithTooltipOnHover>
   )
 }
 
-interface InteractiveCodeProps {
-  pos: DocumentPosition
+export interface InteractiveCodeProps {
   fmt: CodeWithInfos
 }
 
-export function InteractiveCode(props: InteractiveCodeProps) {
-  return <InteractiveTaggedText InnerTagUi={InteractiveCodeTag} fmt={props.fmt} pos={props.pos} />
+/** Displays a {@link CodeWithInfos} obtained via RPC from the Lean server. */
+export function InteractiveCode({fmt}: InteractiveCodeProps) {
+  return <InteractiveTaggedText InnerTagUi={InteractiveCodeTag} fmt={fmt} />
 }

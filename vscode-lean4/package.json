@@ -2,7 +2,7 @@
 	"name": "lean4",
 	"displayName": "lean4",
 	"description": "Lean 4 language support for VS Code",
-	"version": "0.0.82",
+	"version": "0.0.95",
 	"publisher": "leanprover",
 	"engines": {
 		"vscode": "^1.61.0"
@@ -115,6 +115,11 @@
 					"description": "Path to the directory where Lean 4 server log files are stored.",
 					"scope": "machine-overridable"
 				},
+				"lean4.autofocusOutput": {
+					"type": "boolean",
+					"default": false,
+					"description": "Automatically show the Output panel when the Lean 4 server prints a new message."
+				},
 				"lean4.infoViewAllErrorsOnLine": {
 					"type": "boolean",
 					"default": true,
@@ -176,6 +181,12 @@
 					"dark": "./media/display-goal-dark.svg",
 					"light": "./media/display-goal-light.svg"
 				}
+			},
+			{
+				"command": "lean4.toggleInfoview",
+				"category": "Lean 4",
+				"title": "Infoview: Toggle",
+				"description": "Toggle whether the infoview is displayed."
 			},
 			{
 				"command": "lean4.displayList",
@@ -288,7 +299,7 @@
 				"when": "editorTextFocus && editorLangId == lean4"
 			},
 			{
-				"command": "lean4.displayGoal",
+				"command": "lean4.toggleInfoview",
 				"key": "ctrl+shift+enter",
 				"mac": "cmd+shift+enter",
 				"when": "editorTextFocus && editorLangId == lean4"
@@ -324,6 +335,14 @@
 				},
 				{
 					"command": "lean4.restartServer",
+					"when": "editorLangId == lean4"
+				},
+				{
+					"command": "lean4.restartFile",
+					"when": "editorLangId == lean4"
+				},
+				{
+					"command": "lean4.refreshFileDependencies",
 					"when": "editorLangId == lean4"
 				},
 				{
@@ -382,8 +401,8 @@
 	"dependencies": {
 		"@esm-bundle/react": "^17.0.2-fix.1",
 		"@esm-bundle/react-dom": "^17.0.2-fix.0",
-		"@lean4/infoview-api": "^0.1.0",
-		"@lean4/infoview": "^0.1.0",
+		"@leanprover/infoview-api": "^0.1.0",
+		"@leanprover/infoview": "^0.1.0",
 		"axios": "^0.24.0",
 		"cheerio": "^1.0.0-rc.10",
 		"mobx": "5.15.7",
@@ -407,7 +426,7 @@
 		"ovsx": "^0.2.1",
 		"source-map-loader": "^3.0.1",
 		"ts-loader": "^9.2.6",
-		"typescript": "^4.5.4",
+		"typescript": "^4.7.4",
 		"vsce": "~2.6.2",
 		"webpack-cli": "^4.9.1"
 	},

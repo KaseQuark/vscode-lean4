@@ -8,48 +8,120 @@
  */
 
 import * as React from 'react'
-import { RpcContext } from './contexts'
 import { Goal } from './goals'
 import { InteractiveCode, InteractiveTaggedText, InteractiveTagProps, InteractiveTextComponentProps } from './interactiveCode'
-import { InteractiveDiagnostics_msgToInteractive, MessageData, MsgEmbed, TaggedText } from './rpcInterface'
-import { DocumentPosition } from './util'
+import { InteractiveDiagnostics_msgToInteractive, lazyTraceChildrenToInteractive, MessageData, MsgEmbed, TaggedText, TraceEmbed } from '@leanprover/infoview-api'
+import { mapRpcError, useAsyncWithTrigger } from './util'
+import { RpcContext } from './rpcSessions'
 
-function CollapsibleTrace({pos, col, cls, msg}: {pos: DocumentPosition, col: number, cls: string, msg: MessageData}) {
+function LazyTrace({col, cls, msg}: {col: number, cls: string, msg: MessageData}) {
     const rs = React.useContext(RpcContext)
-    const [tt, setTt] = React.useState<TaggedText<MsgEmbed> | undefined>(undefined)
 
-    let inner
-    if (tt) {
-        inner = <>
+    const [tt, fetchTrace] = useAsyncWithTrigger(() =>
+            InteractiveDiagnostics_msgToInteractive(rs, msg, col),
+        [rs, msg, col])
+
+    const [open, setOpen] = React.useState(false)
+
+    if (!open)
+        return <span className="underline-hover pointer"
+            onClick={ev => {
+                fetchTrace()
+                setOpen(true)
+                ev.stopPropagation()
+            }}>[{cls}] &gt;</span>
+    else if (tt.state === 'resolved')
+        return <>
             <span className="underline-hover pointer"
                 onClick={ev => {
-                    setTt(undefined)
+                    setOpen(false)
                     ev.stopPropagation()
                 }}>[{cls}] ∨</span>
-            <InteractiveMessage pos={pos} fmt={tt} />
+            <InteractiveMessage fmt={tt.value} />
         </>
-    } else {
-        inner =
-            <span className="underline-hover pointer"
-                onClick={ev => {
-                    void InteractiveDiagnostics_msgToInteractive(rs, pos, msg, col).then(t => t && setTt(t))
-                    ev.stopPropagation()
-                }}>[{cls}] &gt;</span>
-    }
-    return inner
-}
-
-function InteractiveMessageTag({pos, tag: embed, fmt}: InteractiveTagProps<MsgEmbed>): JSX.Element {
-    if ('expr' in embed)
-        return <InteractiveCode pos={pos} fmt={embed.expr} />
-    else if ('goal' in embed)
-        return <Goal pos={pos} goal={embed.goal} filter={{reverse: false, isType: false, isInstance: false, isHiddenAssumption: false}} />
-    else if ('lazyTrace' in embed)
-        return <CollapsibleTrace pos={pos} col={embed.lazyTrace[0]} cls={embed.lazyTrace[1]} msg={embed.lazyTrace[2]} />
+    else if (tt.state === 'rejected')
+        return <><span className="underline-hover pointer"
+            onClick={ev => {
+                fetchTrace()
+                ev.stopPropagation()
+            }}>[{cls}] Error (click to retry):</span> {mapRpcError(tt.error)}</>
     else
-        throw new Error(`malformed 'MsgEmbed': '${embed}'`)
+        return <span>[{cls}] Loading..</span>
 }
 
-export function InteractiveMessage({pos, fmt}: InteractiveTextComponentProps<MsgEmbed>) {
-    return InteractiveTaggedText({pos, fmt, InnerTagUi: InteractiveMessageTag})
+const TraceClassContext = React.createContext<string>('')
+
+function abbreviateCommonPrefix(parent: string, cls: string): string {
+    const parentParts = parent.split('.');
+    const clsParts = cls.split('.');
+    let i = 0;
+    for (; i < parentParts.length && i < clsParts.length && parentParts[i] === clsParts[i]; i++);
+    return clsParts.slice(i).join('.');
+}
+
+function TraceLine({ indent, cls, msg, icon }: TraceEmbed & { icon: string }) {
+    const spaces = ' '.repeat(indent)
+    const abbrCls = abbreviateCommonPrefix(React.useContext(TraceClassContext), cls);
+    return <div className='trace-line'>{spaces}<span className="trace-class" title={cls}>[{abbrCls}]</span> <InteractiveMessage fmt={msg}/> {icon}</div>;
+}
+
+function ChildlessTraceNode(traceEmbed: TraceEmbed) {
+    return <TraceLine {...traceEmbed} icon=''/>
+}
+
+function CollapsibleTraceNode(traceEmbed: TraceEmbed) {
+    const {cls, collapsed: collapsedByDefault, children: lazyKids} = traceEmbed
+
+    const rs = React.useContext(RpcContext)
+    const [children, fetchChildren] = useAsyncWithTrigger(async () => {
+        if ('strict' in lazyKids) {
+            return lazyKids.strict
+        } else {
+            return lazyTraceChildrenToInteractive(rs, lazyKids.lazy)
+        }
+    }, [rs, lazyKids])
+
+    const [open, setOpen] = React.useState(!collapsedByDefault) // TODO: reset when collapsedByDefault changes?
+    if (open && children.state === 'notStarted') fetchChildren();
+    let icon = open ? '▼' : '▶';
+    if (children.state === 'loading') icon += ' ⋯'
+
+    const onClick = React.useCallback((ev: React.MouseEvent) => {
+        ev.stopPropagation()
+        if (!open) fetchChildren();
+        setOpen(o => !o)
+    }, [open])
+
+    return <div>
+        <div className='pointer' onClick={onClick}><TraceLine {...traceEmbed} icon={icon} /></div>
+        <div style={{display: open ? 'block' : 'none'}}>
+            <TraceClassContext.Provider value={cls}>
+                {children.state === 'resolved' &&
+                    children.value.map((tt, i) => <InteractiveMessage fmt={tt} key={i}/>)}
+                {children.state === 'rejected' && mapRpcError(children.error)}
+            </TraceClassContext.Provider>
+        </div>
+    </div>
+}
+
+function Trace(traceEmbed: TraceEmbed) {
+    const noChildren = 'strict' in traceEmbed.children && traceEmbed.children.strict.length === 0
+    return noChildren ? <ChildlessTraceNode {...traceEmbed}/> : <CollapsibleTraceNode {...traceEmbed}/>
+}
+
+function InteractiveMessageTag({tag: embed}: InteractiveTagProps<MsgEmbed>): JSX.Element {
+    if ('expr' in embed)
+        return <InteractiveCode fmt={embed.expr} />
+    else if ('goal' in embed)
+        return <Goal goal={embed.goal} filter={{reverse: false, isType: false, isInstance: false, isHiddenAssumption: false}} />
+    else if ('lazyTrace' in embed)
+        return <LazyTrace col={embed.lazyTrace[0]} cls={embed.lazyTrace[1]} msg={embed.lazyTrace[2]} />
+    else if ('trace' in embed)
+        return <Trace {...embed.trace} />
+    else
+        return <div>malformed MsgEmbed: {JSON.stringify(embed)}</div>
+}
+
+export function InteractiveMessage({fmt}: InteractiveTextComponentProps<MsgEmbed>) {
+    return InteractiveTaggedText({fmt, InnerTagUi: InteractiveMessageTag})
 }

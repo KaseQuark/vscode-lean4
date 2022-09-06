@@ -1,15 +1,15 @@
 import * as path from 'path';
 import * as cp from 'child_process';
 
-console.log(__dirname);
-
-import { runTests, downloadAndUnzipVSCode, resolveCliArgsFromVSCodeExecutablePath  } from '@vscode/test-electron';
+import { runTests, downloadAndUnzipVSCode, resolveCliArgsFromVSCodeExecutablePath } from '@vscode/test-electron';
 import * as fs from 'fs';
+import { DownloadArchitecture } from '@vscode/test-electron/out/download';
+import { logger } from '../../src/utils/logger'
 
 function clearUserWorkspaceData(vscodeTest: string) {
     const workspaceData = path.join(vscodeTest, 'user-data', 'Workspaces');
     fs.rmdir(workspaceData, { recursive: true }, (err) => {
-        console.log(`deleted user workspace data ${workspaceData} is deleted!`);
+        logger.log(`deleted user workspace data ${workspaceData} is deleted!`);
     });
 }
 
@@ -25,7 +25,16 @@ async function main() {
         clearUserWorkspaceData(vscodeTestPath);
 
         // This will download VS Code, unzip it and run the integration test
-        const vscodeExecutablePath = await downloadAndUnzipVSCode();
+        let vscodeExecutablePath: string;
+
+        if (process.platform === 'win32') {
+            vscodeExecutablePath = await downloadAndUnzipVSCode({
+                platform: 'win32-x64-archive',
+                architecture : DownloadArchitecture.X64});
+        }
+        else{
+            vscodeExecutablePath = await downloadAndUnzipVSCode();
+        }
 
         // Install the lean3 extension!
         const [cli, ...args] = resolveCliArgsFromVSCodeExecutablePath (vscodeExecutablePath);
@@ -34,22 +43,33 @@ async function main() {
             stdio: 'inherit'
         });
 
-        // run the lean3 test in one vs code instance, using `open folder` since
-        // lean3 doesn't lile ad-hoc files.
-        const testFolder = path.join(extensionDevelopmentPath, 'test', 'test-fixtures', 'lean3');
-
-        await runTests({
-            vscodeExecutablePath,
-            extensionDevelopmentPath,
-            extensionTestsPath: path.resolve(__dirname, 'index'),
-            extensionTestsEnv: {'TEST_FOLDER': 'lean3'},
-            launchArgs: ['--new-window', '--disable-gpu', testFolder] });
-
-        // The '--new-window' doesn't see to be working, so this hack
-        // ensures the following test does not re-open the lean3 folder
         clearUserWorkspaceData(vscodeTestPath);
 
-		// run no elan tests
+		// run bootstrap tests
+		await runTests({
+			vscodeExecutablePath,
+			extensionDevelopmentPath,
+            extensionTestsPath:path.resolve(__dirname, 'index'),
+            extensionTestsEnv: {'TEST_FOLDER': 'bootstrap'},
+			launchArgs: ['--new-window', '--disable-gpu'] });
+
+        clearUserWorkspaceData(vscodeTestPath);
+
+        // now that elan is installed we can run the lean3 test in one vs code instance,
+        // using `open folder` since lean3 doesn't like ad-hoc files.
+
+        // BUGBUG: this test has begun to fail on newer vscode builds with "Uncaught Error: write EPIPE"
+        // await runTests({
+        //     vscodeExecutablePath,
+        //     extensionDevelopmentPath,
+        //     extensionTestsPath: path.resolve(__dirname, 'index'),
+        //     extensionTestsEnv: {'TEST_FOLDER': 'lean3'},
+        //     launchArgs: ['--new-window', '--disable-gpu'] });
+        // // The '--new-window' doesn't see to be working, so this hack
+        // // ensures the following test does not re-open the lean3 folder
+        // clearUserWorkspaceData(vscodeTestPath);
+
+		// run 'no elan' tests
 		await runTests({
 			vscodeExecutablePath,
 			extensionDevelopmentPath,
@@ -68,7 +88,7 @@ async function main() {
 			launchArgs: ['--new-window', '--disable-gpu'] });
 
 		// The '--new-window' doesn't see to be working, so this hack
-		// ensures the following test does not re-open the lean3 folder
+		// ensures the following test does not re-open the previous folder
 		clearUserWorkspaceData(vscodeTestPath);
 
 		// run the lean4 tests in adhoc file configuration (no folder open)
@@ -83,7 +103,7 @@ async function main() {
         const lean4TestFolder = path.join(extensionDevelopmentPath, 'test', 'test-fixtures', 'simple');
 
         // The '--new-window' doesn't see to be working, so this hack
-        // ensures the following test does not re-open the lean3 folder
+        // ensures the following test does not re-open the previous folder
         clearUserWorkspaceData(vscodeTestPath);
 
         // run the lean4 simple tests again, this time with an "open folder" configuration
@@ -95,7 +115,7 @@ async function main() {
             launchArgs: ['--new-window', '--disable-gpu', lean4TestFolder] });
 
         // The '--new-window' doesn't see to be working, so this hack
-        // ensures the following test does not re-open the lean3 folder
+        // ensures the following test does not re-open the previous folder
         clearUserWorkspaceData(vscodeTestPath);
 
         // run the lean4 toolchain tests, also reusing the 'simple' project.
@@ -107,7 +127,19 @@ async function main() {
             launchArgs: ['--new-window', '--disable-gpu', lean4TestFolder] });
 
         // The '--new-window' doesn't see to be working, so this hack
-        // ensures the following test does not re-open the lean3 folder
+        // ensures the following test does not re-open the previous folder
+        clearUserWorkspaceData(vscodeTestPath);
+
+        // run the lean4 restart tests, also reusing the 'simple' project.
+        await runTests({
+            vscodeExecutablePath,
+            extensionDevelopmentPath,
+            extensionTestsPath:path.resolve(__dirname, 'index'),
+            extensionTestsEnv: {'TEST_FOLDER': 'restarts'},
+            launchArgs: ['--new-window', '--disable-gpu', lean4TestFolder] });
+
+        // The '--new-window' doesn't see to be working, so this hack
+        // ensures the following test does not re-open the previous folder
         clearUserWorkspaceData(vscodeTestPath);
 
         const workspacePath = path.join(extensionDevelopmentPath, 'test', 'test-fixtures', 'multi', 'multi.code-workspace');
