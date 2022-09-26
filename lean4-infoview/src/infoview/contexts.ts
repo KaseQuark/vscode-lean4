@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { DocumentUri, Diagnostic } from 'vscode-languageserver-protocol';
+import type { DocumentUri, Diagnostic, TextDocumentPositionParams } from 'vscode-languageserver-protocol';
 
 import { LeanFileProgressProcessingInfo, InfoviewConfig, defaultInfoviewConfig } from '@leanprover/infoview-api';
 
@@ -14,3 +14,4 @@ export const VersionContext = React.createContext<ServerVersion | undefined>(und
 export const ConfigContext = React.createContext<InfoviewConfig>(defaultInfoviewConfig);
 export const LspDiagnosticsContext = React.createContext<Map<DocumentUri, Diagnostic[]>>(new Map());
 export const ProgressContext = React.createContext<Map<DocumentUri, LeanFileProgressProcessingInfo[]>>(new Map());
+export const PositionContext = React.createContext<TextDocumentPositionParams>(null as any)
