@@ -1,6 +1,6 @@
 import * as React from 'react';
 import * as ReactDOM from 'react-dom';
-import type { DidCloseTextDocumentParams, Location, DocumentUri } from 'vscode-languageserver-protocol';
+import type { DidCloseTextDocumentParams, Location, DocumentUri, TextDocumentPositionParams, TextDocumentIdentifier } from 'vscode-languageserver-protocol';
 
 import 'tachyons/css/tachyons.css';
 import '@vscode/codicons/dist/codicon.ttf';
@@ -12,11 +12,12 @@ import { LeanFileProgressParams, LeanFileProgressProcessingInfo, defaultInfoview
 import { Infos } from './infos';
 import { AllMessages, WithLspDiagnosticsContext } from './messages';
 import { useClientNotificationEffect, useEventResult, useServerNotificationState } from './util';
-import { EditorContext, ConfigContext, ProgressContext, VersionContext } from './contexts';
+import { EditorContext, ConfigContext, ProgressContext, VersionContext, PositionContext } from './contexts';
 import { WithRpcSessions } from './rpcSessions';
 import { EditorConnection, EditorEvents } from './editorConnection';
 import { Event } from './event';
 import { ServerVersion } from './serverVersion';
+import { Position } from 'vscode-languageserver-protocol';
 
 
 function Main(props: {}) {
@@ -36,6 +37,10 @@ function Main(props: {}) {
     );
 
     const curUri = useEventResult(ec.events.changedCursorLocation, loc => loc?.uri);
+    const loc = useEventResult(ec.events.changedCursorLocation, loc => loc)
+    let uri = loc?.uri ?? ""
+    let pos = loc?.range?.start ?? Position.create(0,0)
+    const posParams : TextDocumentPositionParams = {textDocument : { uri }, position : pos}
 
     useClientNotificationEffect(
         'textDocument/didClose',
@@ -71,17 +76,19 @@ function Main(props: {}) {
     }
 
     return (
-    <ConfigContext.Provider value={config}>
-        <VersionContext.Provider value={sv}>
-            <WithRpcSessions>
-                <WithLspDiagnosticsContext>
-                    <ProgressContext.Provider value={allProgress}>
-                        {ret}
-                    </ProgressContext.Provider>
-                </WithLspDiagnosticsContext>
-            </WithRpcSessions>
-        </VersionContext.Provider>
-    </ConfigContext.Provider>
+    <PositionContext.Provider value={posParams}>
+        <ConfigContext.Provider value={config}>
+            <VersionContext.Provider value={sv}>
+                <WithRpcSessions>
+                    <WithLspDiagnosticsContext>
+                        <ProgressContext.Provider value={allProgress}>
+                            {ret}
+                        </ProgressContext.Provider>
+                    </WithLspDiagnosticsContext>
+                </WithRpcSessions>
+            </VersionContext.Provider>
+        </ConfigContext.Provider>
+    </PositionContext.Provider>
     );
 }
 

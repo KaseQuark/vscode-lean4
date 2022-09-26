@@ -1,6 +1,6 @@
 import * as React from 'react'
 
-import { EditorContext } from './contexts'
+import { EditorContext, PositionContext } from './contexts'
 import { DocumentPosition, useAsync, mapRpcError } from './util'
 import { SubexprInfo, CodeWithInfos, InteractiveDiagnostics_infoToInteractive, getGoToLocation, TaggedText, getConvZoomCommands } from '@leanprover/infoview-api'
 import { DetectHoverSpan, HoverState, WithTooltipOnHover } from './tooltips'
@@ -93,12 +93,15 @@ function TypePopupContents({ info, redrawTooltip }: TypePopupContentsProps) {
 
 /** Tagged spans can be hovered over to display extra info stored in the associated `SubexprInfo`. */
 function InteractiveCodeTag({tag: ct, fmt}: InteractiveTagProps<SubexprInfo>) {
+  const rs = React.useContext(RpcContext)
+  const ec = React.useContext(EditorContext)
+  const pc = React.useContext(PositionContext)
   const mkTooltip = React.useCallback((redrawTooltip: () => void) =>
   <div className="font-code tl pre-wrap">
     <TypePopupContents info={ct} redrawTooltip={redrawTooltip} />
     <button onClick={async e => {
         e.preventDefault()
-        const commands = getConvZoomCommands(rs, ct)
+        const commands = getConvZoomCommands(rs, ct, pc)
         try {
           const comm = await commands
         } catch (err: any) {
@@ -107,12 +110,8 @@ function InteractiveCodeTag({tag: ct, fmt}: InteractiveTagProps<SubexprInfo>) {
       }
     }>Zoom</button>
     </div>, [ct.info])
-    //<TypePopupContents info={ct} redrawTooltip={redrawTooltip} />,
-    //[ct.info])
 
   // We mimick the VSCode ctrl-hover and ctrl-click UI for go-to-definition
-  const rs = React.useContext(RpcContext)
-  const ec = React.useContext(EditorContext)
   const [hoverState, setHoverState] = React.useState<HoverState>('off')
 
   const [goToLoc, setGoToLoc] = React.useState<Location | undefined>(undefined)
