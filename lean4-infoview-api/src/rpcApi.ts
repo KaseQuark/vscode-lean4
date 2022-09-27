@@ -5,7 +5,7 @@
  * @module
  */
 
-import type { LocationLink, Position, Range, TextDocumentPositionParams } from 'vscode-languageserver-protocol'
+import type { integer, LocationLink, Position, Range, TextDocumentPositionParams, URI } from 'vscode-languageserver-protocol'
 import { LeanDiagnostic, RpcPtr } from './lspTypes'
 import { RpcSessionAtPos } from './rpcSessions'
 
@@ -57,13 +57,23 @@ export interface InteractiveGoal {
     mvarId?: string
 }
 
-export interface ConvZoomCommands {
-    commands?: string
-}
-
 export interface ConvZoomParams {
     expr: SubexprInfo
     positionParams: TextDocumentPositionParams
+}
+
+export interface ConvZoomCommands {
+    path?: integer[]
+}
+
+export interface MoveCursorAfterZoomParams {
+    path: integer[]
+    positionParams: TextDocumentPositionParams
+}
+
+export interface MoveCursorAfterZoomPosition{
+    position?: Position
+    uri?: URI
 }
 
 export interface InteractiveGoals {
@@ -81,6 +91,12 @@ export function getInteractiveTermGoal(rs: RpcSessionAtPos, pos: TextDocumentPos
 export async function getConvZoomCommands(rs: RpcSessionAtPos, exprParam: SubexprInfo, posParam : TextDocumentPositionParams): Promise<ConvZoomCommands | undefined> {
     const params: ConvZoomParams = {expr: exprParam, positionParams : posParam}
     const ret = await rs.call<ConvZoomParams, ConvZoomCommands>('Lean.Widget.getConvZoomCommands', params)
+    if (ret) return ret
+}
+
+export async function moveCursorAfterZoom(rs : RpcSessionAtPos, pathParam: integer[], posParam : TextDocumentPositionParams): Promise<MoveCursorAfterZoomPosition | undefined> {
+    const params: MoveCursorAfterZoomParams = {path: pathParam, positionParams : posParam}
+    const ret = await rs.call<MoveCursorAfterZoomParams, MoveCursorAfterZoomPosition>('Lean.Widget.moveCursorAfterZoom', params)
     if (ret) return ret
 }
 

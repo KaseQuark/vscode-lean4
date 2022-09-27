@@ -1,8 +1,8 @@
 import * as React from 'react'
 
 import { EditorContext, PositionContext } from './contexts'
-import { DocumentPosition, useAsync, mapRpcError } from './util'
-import { SubexprInfo, CodeWithInfos, InteractiveDiagnostics_infoToInteractive, getGoToLocation, TaggedText, getConvZoomCommands } from '@leanprover/infoview-api'
+import { useAsync, mapRpcError } from './util'
+import { SubexprInfo, CodeWithInfos, InteractiveDiagnostics_infoToInteractive, getGoToLocation, TaggedText, getConvZoomCommands, moveCursorAfterZoom } from '@leanprover/infoview-api'
 import { DetectHoverSpan, HoverState, WithTooltipOnHover } from './tooltips'
 import { Location } from 'vscode-languageserver-protocol'
 import { marked } from 'marked'
@@ -101,9 +101,18 @@ function InteractiveCodeTag({tag: ct, fmt}: InteractiveTagProps<SubexprInfo>) {
     <TypePopupContents info={ct} redrawTooltip={redrawTooltip} />
     <button onClick={async e => {
         e.preventDefault()
-        const commands = getConvZoomCommands(rs, ct, pc)
+        const res = getConvZoomCommands(rs, ct, pc)
         try {
-          const comm = await commands
+          const path = await res
+          if (path != undefined && path.path != undefined) {
+            const res2 = moveCursorAfterZoom(rs, path.path, pc)
+            const pos = await res2
+            if (pos != undefined) {
+              if ((pos.position != undefined) && (pos.uri != undefined)) {
+                ec.revealPosition({uri : pos.uri, line : pos.position.line, character : pos.position.character})
+              }
+            }
+          }
         } catch (err: any) {
           const errS = typeof err === 'string' ? err : JSON.stringify(err);
         }
