@@ -2,7 +2,7 @@ import * as React from 'react'
 
 import { EditorContext, PositionContext } from './contexts'
 import { useAsync, mapRpcError } from './util'
-import { SubexprInfo, CodeWithInfos, InteractiveDiagnostics_infoToInteractive, getGoToLocation, TaggedText, getConvZoomCommands, moveCursorAfterZoom } from '@leanprover/infoview-api'
+import { SubexprInfo, CodeWithInfos, InteractiveDiagnostics_infoToInteractive, getGoToLocation, TaggedText, insertEnter, moveCursorAfterZoom } from '@leanprover/infoview-api'
 import { DetectHoverSpan, HoverState, WithTooltipOnHover } from './tooltips'
 import { Location } from 'vscode-languageserver-protocol'
 import { marked } from 'marked'
@@ -101,7 +101,7 @@ function InteractiveCodeTag({tag: ct, fmt}: InteractiveTagProps<SubexprInfo>) {
     <TypePopupContents info={ct} redrawTooltip={redrawTooltip} />
     <button onClick={async e => {
         e.preventDefault()
-        const res = getConvZoomCommands(rs, ct, pc)
+        const res = insertEnter(rs, ct, pc)
         try {
           const path = await res
           if (path != undefined && path.path != undefined) {

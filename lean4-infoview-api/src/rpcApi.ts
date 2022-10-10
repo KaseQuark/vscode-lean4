@@ -62,7 +62,7 @@ export interface ConvZoomParams {
     positionParams: TextDocumentPositionParams
 }
 
-export interface ConvZoomCommands {
+export interface NewEnterPath {
     path?: integer[]
 }
 
@@ -88,9 +88,9 @@ export function getInteractiveTermGoal(rs: RpcSessionAtPos, pos: TextDocumentPos
     return rs.call('Lean.Widget.getInteractiveTermGoal', pos);
 }
 
-export async function getConvZoomCommands(rs: RpcSessionAtPos, exprParam: SubexprInfo, posParam : TextDocumentPositionParams): Promise<ConvZoomCommands | undefined> {
+export async function insertEnter(rs: RpcSessionAtPos, exprParam: SubexprInfo, posParam : TextDocumentPositionParams): Promise<NewEnterPath | undefined> {
     const params: ConvZoomParams = {expr: exprParam, positionParams : posParam}
-    const ret = await rs.call<ConvZoomParams, ConvZoomCommands>('Lean.Widget.getConvZoomCommands', params)
+    const ret = await rs.call<ConvZoomParams, NewEnterPath>('Lean.Widget.insertEnter', params)
     if (ret) return ret
 }
 
