@@ -62,17 +62,8 @@ export interface ConvZoomParams {
     positionParams: TextDocumentPositionParams
 }
 
-export interface NewEnterPath {
-    path?: integer[]
-}
-
-export interface MoveCursorAfterZoomParams {
-    path: integer[]
-    positionParams: TextDocumentPositionParams
-}
-
-export interface MoveCursorAfterZoomPosition{
-    position?: Position
+export interface NewCursorPos {
+    newCursorPos?: Position;
     uri?: URI
 }
 
@@ -88,15 +79,9 @@ export function getInteractiveTermGoal(rs: RpcSessionAtPos, pos: TextDocumentPos
     return rs.call('Lean.Widget.getInteractiveTermGoal', pos);
 }
 
-export async function insertEnter(rs: RpcSessionAtPos, exprParam: SubexprInfo, posParam : TextDocumentPositionParams): Promise<NewEnterPath | undefined> {
+export async function insertEnter(rs: RpcSessionAtPos, exprParam: SubexprInfo, posParam : TextDocumentPositionParams): Promise<NewCursorPos | undefined> {
     const params: ConvZoomParams = {expr: exprParam, positionParams : posParam}
-    const ret = await rs.call<ConvZoomParams, NewEnterPath>('Lean.Widget.insertEnter', params)
-    if (ret) return ret
-}
-
-export async function moveCursorAfterZoom(rs : RpcSessionAtPos, pathParam: integer[], posParam : TextDocumentPositionParams): Promise<MoveCursorAfterZoomPosition | undefined> {
-    const params: MoveCursorAfterZoomParams = {path: pathParam, positionParams : posParam}
-    const ret = await rs.call<MoveCursorAfterZoomParams, MoveCursorAfterZoomPosition>('Lean.Widget.moveCursorAfterZoom', params)
+    const ret = await rs.call<ConvZoomParams, NewCursorPos>('Lean.Widget.insertEnter', params)
     if (ret) return ret
 }
 

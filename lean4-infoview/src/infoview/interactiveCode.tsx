@@ -2,7 +2,7 @@ import * as React from 'react'
 
 import { EditorContext, PositionContext } from './contexts'
 import { useAsync, mapRpcError } from './util'
-import { SubexprInfo, CodeWithInfos, InteractiveDiagnostics_infoToInteractive, getGoToLocation, TaggedText, insertEnter, moveCursorAfterZoom } from '@leanprover/infoview-api'
+import { SubexprInfo, CodeWithInfos, InteractiveDiagnostics_infoToInteractive, getGoToLocation, TaggedText, insertEnter } from '@leanprover/infoview-api'
 import { DetectHoverSpan, HoverState, WithTooltipOnHover } from './tooltips'
 import { Location } from 'vscode-languageserver-protocol'
 import { marked } from 'marked'
@@ -104,17 +104,12 @@ function InteractiveCodeTag({tag: ct, fmt}: InteractiveTagProps<SubexprInfo>) {
         const res = insertEnter(rs, ct, pc)
         try {
           const path = await res
-          if (path != undefined && path.path != undefined) {
-            const res2 = moveCursorAfterZoom(rs, path.path, pc)
-            const pos = await res2
-            if (pos != undefined) {
-              if ((pos.position != undefined) && (pos.uri != undefined)) {
-                ec.revealPosition({uri : pos.uri, line : pos.position.line, character : pos.position.character})
-              }
-            }
+          if (path != undefined && path.newCursorPos != undefined && path.uri != undefined) {
+            ec.revealPosition({uri : path.uri, line : path.newCursorPos.line, character : path.newCursorPos.character})
           }
         } catch (err: any) {
           const errS = typeof err === 'string' ? err : JSON.stringify(err);
+          console.log('error clicking zoom button', errS)
         }
       }
     }>Zoom</button>
